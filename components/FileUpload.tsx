@@ -30,15 +30,15 @@ export default function FileUpload({
 
       try {
         setUploadProgress('Processing with OCR...');
-        const data = await api.extractDeed(file);
+        const result = await api.extractDeed(file);
 
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to extract deed data');
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to extract deed data');
         }
 
         setUploadProgress('Extraction complete!');
         setTimeout(() => {
-          onDataExtracted(data);
+          onDataExtracted(result as any);
         }, 500);
       } catch (err) {
         setError(
