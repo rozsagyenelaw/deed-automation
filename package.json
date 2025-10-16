@@ -17,7 +17,8 @@
     "react-dropzone": "^14.2.3",
     "pdf-lib": "^1.17.1",
     "axios": "^1.6.8",
-    "date-fns": "^3.6.0"
+    "date-fns": "^3.6.0",
+    "lambda-multipart-parser": "^1.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",
