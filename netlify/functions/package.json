@@ -1,0 +1,10 @@
+{
+  "name": "netlify-functions",
+  "version": "1.0.0",
+  "description": "Serverless functions for trust transfer deed automation",
+  "main": "index.js",
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "lambda-multipart-parser": "^1.0.1"
+  }
+}
