@@ -7,10 +7,42 @@ interface APIResponse {
   pdf?: Blob;
   filename?: string;
   error?: string;
+  [key: string]: any;
 }
 
 // API object with methods
 export const api = {
+  async extractDeed(file: File): Promise<APIResponse> {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch(`${API_BASE_URL}/api/ocr`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        return {
+          success: false,
+          error: 'Failed to extract deed data'
+        };
+      }
+      
+      const data = await response.json();
+      
+      return {
+        success: true,
+        ...data
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to extract deed data'
+      };
+    }
+  },
+
   async generateDeed(data: any): Promise<APIResponse> {
     try {
       const response = await fetch(`${API_BASE_URL}/api/generate-deed`, {
