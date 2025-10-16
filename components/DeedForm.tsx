@@ -79,8 +79,10 @@ export default function DeedForm({ initialData, onReset }: DeedFormProps) {
       }
       
       if (pcorResult.pdf && pcorResult.filename) {
+        const pcorPdf = pcorResult.pdf;
+        const pcorFilename = pcorResult.filename;
         setTimeout(() => {
-          downloadPDF(pcorResult.pdf, pcorResult.filename);
+          downloadPDF(pcorPdf, pcorFilename);
         }, 500);
       }
 
