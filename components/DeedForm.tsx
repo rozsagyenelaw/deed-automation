@@ -74,10 +74,15 @@ export default function DeedForm({ initialData, onReset }: DeedFormProps) {
       }
 
       // Download both documents
-      downloadPDF(deedResult.pdf, deedResult.filename);
-      setTimeout(() => {
-        downloadPDF(pcorResult.pdf, pcorResult.filename);
-      }, 500);
+      if (deedResult.pdf && deedResult.filename) {
+        downloadPDF(deedResult.pdf, deedResult.filename);
+      }
+      
+      if (pcorResult.pdf && pcorResult.filename) {
+        setTimeout(() => {
+          downloadPDF(pcorResult.pdf, pcorResult.filename);
+        }, 500);
+      }
 
       setSuccess('Documents generated and downloaded successfully!');
     } catch (err) {
