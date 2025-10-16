@@ -2,38 +2,79 @@
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+interface APIResponse {
+  success: boolean;
+  pdf?: Blob;
+  filename?: string;
+  error?: string;
+}
+
 // API object with methods
 export const api = {
-  async uploadPDF(file: File) {
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    const response = await fetch(`${API_BASE_URL}/api/ocr`, {
-      method: 'POST',
-      body: formData,
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to process PDF');
+  async generateDeed(data: any): Promise<APIResponse> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/generate-deed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        return {
+          success: false,
+          error: 'Failed to generate deed'
+        };
+      }
+      
+      const blob = await response.blob();
+      const filename = `${data.grantor.replace(/\s+/g, '_')}_Trust_Transfer_Deed.pdf`;
+      
+      return {
+        success: true,
+        pdf: blob,
+        filename
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to generate deed'
+      };
     }
-    
-    return response.json();
   },
 
-  async generateDeed(data: any) {
-    const response = await fetch(`${API_BASE_URL}/api/generate-deed`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to generate deed');
+  async fillPCOR(data: any): Promise<APIResponse> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/fill-pcor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        return {
+          success: false,
+          error: 'Failed to generate PCOR form'
+        };
+      }
+      
+      const blob = await response.blob();
+      const filename = `${data.county.replace(/\s+/g, '_')}_PCOR_${data.apn}.pdf`;
+      
+      return {
+        success: true,
+        pdf: blob,
+        filename
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to generate PCOR form'
+      };
     }
-    
-    return response.blob();
   }
 };
 
