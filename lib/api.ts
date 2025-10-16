@@ -17,7 +17,7 @@ export const api = {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch(`${API_BASE_URL}/api/ocr`, {
+      const response = await fetch(`${API_BASE_URL}/.netlify/functions/extract-deed`, {
         method: 'POST',
         body: formData,
       });
@@ -45,7 +45,7 @@ export const api = {
 
   async generateDeed(data: any): Promise<APIResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/generate-deed`, {
+      const response = await fetch(`${API_BASE_URL}/.netlify/functions/generate-deed`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,7 +78,7 @@ export const api = {
 
   async fillPCOR(data: any): Promise<APIResponse> {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/fill-pcor`, {
+      const response = await fetch(`${API_BASE_URL}/.netlify/functions/fill-pcor`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
