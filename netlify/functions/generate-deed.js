@@ -23,6 +23,35 @@ function formatTrustDate(dateStr) {
   }
 }
 
+// Helper function to split address into street and city/state/zip
+function splitAddress(address) {
+  // Match pattern: "6821 Saint Estaban Street Los Angeles, CA 91042"
+  // or "6821 Saint Estaban Street Los Angeles (Tujunga area), CA 91042"
+  const match = address.match(/^(\d+\s+[^,]+?(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?)\s+(.+)$/i);
+  
+  if (match) {
+    return {
+      street: match[1].trim(),
+      cityStateZip: match[2].trim()
+    };
+  }
+  
+  // Fallback: try to split at first comma
+  const commaIndex = address.indexOf(',');
+  if (commaIndex > 0) {
+    return {
+      street: address.substring(0, commaIndex).trim(),
+      cityStateZip: address.substring(commaIndex + 1).trim()
+    };
+  }
+  
+  // If no pattern matches, return as-is
+  return {
+    street: address,
+    cityStateZip: ''
+  };
+}
+
 exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -153,11 +182,17 @@ exports.handler = async (event, context) => {
     y = drawWrappedText((data.trustee || data.grantor).toUpperCase(), margin, y, leftColumnWidth, 11, 14, font, coverPage);
     y -= 6;
     
-    // Wrap mailing address if needed
+    // Split and wrap mailing address
     if (data.mailingAddress) {
-      y = drawWrappedText(data.mailingAddress.toUpperCase(), margin, y, leftColumnWidth, 11, 14, font, coverPage);
+      const addressParts = splitAddress(data.mailingAddress);
+      drawText(addressParts.street.toUpperCase(), margin, y, 11, font, coverPage);
+      y -= 14;
+      if (addressParts.cityStateZip) {
+        drawText(addressParts.cityStateZip.toUpperCase(), margin, y, 11, font, coverPage);
+        y -= 14;
+      }
     }
-    y -= 20;
+    y -= 6;
 
     // Draw horizontal line
     const horizontalLineY = y;
@@ -222,7 +257,7 @@ exports.handler = async (event, context) => {
     const page2 = pdfDoc.addPage([612, 792]);
     
     // Calculate box height dynamically based on content
-    const boxContentWidth = width - (margin * 2) - 20; // Leave padding inside box
+    const boxContentWidth = width - (margin * 2) - 20;
     let estimatedLines = 0;
     
     // Count lines needed
@@ -231,11 +266,13 @@ exports.handler = async (event, context) => {
     estimatedLines += 1; // spacing
     estimatedLines += 1; // WHEN RECORDED MAIL TO
     estimatedLines += Math.ceil(font.widthOfTextAtSize((data.trustee || data.grantor).toUpperCase(), 11) / boxContentWidth);
+    
+    // Add lines for address (split into 2 lines)
     if (data.mailingAddress) {
-      estimatedLines += Math.ceil(font.widthOfTextAtSize(data.mailingAddress.toUpperCase(), 11) / boxContentWidth);
+      estimatedLines += 2; // Street + City/State/Zip
     }
     
-    const boxHeight = Math.max(130, (estimatedLines * 14) + 30); // Minimum 130px
+    const boxHeight = Math.max(140, (estimatedLines * 14) + 30); // Minimum 140px
     const boxTop = height - 60;
     const boxBottom = boxTop - boxHeight;
 
@@ -249,10 +286,9 @@ exports.handler = async (event, context) => {
       borderWidth: 1,
     });
 
-    // NOW draw content INSIDE the box, starting from the top
-    y = boxTop - 15; // Start 15px below the top of box
+    // NOW draw content INSIDE the box
+    y = boxTop - 15;
 
-    // Content INSIDE the box with wrapping
     drawText('RECORDING REQUESTED BY', margin + 10, y, 11, boldFont, page2);
     y -= 14;
     y = drawWrappedText(data.trustName.toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
@@ -263,8 +299,15 @@ exports.handler = async (event, context) => {
     y = drawWrappedText((data.trustee || data.grantor).toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
     y -= 6;
     
+    // Split and display address on two lines
     if (data.mailingAddress) {
-      y = drawWrappedText(data.mailingAddress.toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
+      const addressParts = splitAddress(data.mailingAddress);
+      drawText(addressParts.street.toUpperCase(), margin + 10, y, 11, font, page2);
+      y -= 14;
+      if (addressParts.cityStateZip) {
+        drawText(addressParts.cityStateZip.toUpperCase(), margin + 10, y, 11, font, page2);
+        y -= 14;
+      }
     }
 
     // Continue BELOW the box
@@ -349,7 +392,12 @@ exports.handler = async (event, context) => {
     drawText((data.trustee || data.grantor).toUpperCase(), margin, y, 10, font, page2);
     y -= 12;
     if (data.mailingAddress) {
-      drawText(data.mailingAddress.toUpperCase(), margin, y, 10, font, page2);
+      const addressParts = splitAddress(data.mailingAddress);
+      drawText(addressParts.street.toUpperCase(), margin, y, 10, font, page2);
+      y -= 12;
+      if (addressParts.cityStateZip) {
+        drawText(addressParts.cityStateZip.toUpperCase(), margin, y, 10, font, page2);
+      }
     }
 
     console.log('Main deed page created');
