@@ -1,6 +1,6 @@
 /**
  * Netlify serverless function for OCR extraction
- * Uses Google Cloud Vision API - BEST accuracy for scanned legal documents
+ * Uses Google Cloud Vision API with proper PDF handling
  */
 
 const multipart = require('lambda-multipart-parser');
@@ -35,19 +35,39 @@ exports.handler = async (event, context) => {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'No file uploaded' }),
+        body: JSON.stringify({ 
+          success: false,
+          error: 'No file uploaded' 
+        }),
       };
     }
 
     const file = result.files[0];
+    console.log('Processing file:', file.filename, 'Size:', file.content.length);
+
+    // Check file size (Google Vision limit is 20MB for base64)
+    if (file.content.length > 20 * 1024 * 1024) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'File too large. Please upload a file smaller than 20MB.'
+        }),
+      };
+    }
+
     const base64File = Buffer.from(file.content).toString('base64');
 
     // Call Google Cloud Vision API
+    console.log('Calling Google Vision API...');
     const ocrText = await performGoogleOCR(base64File);
 
     if (!ocrText) {
-      throw new Error('OCR extraction failed');
+      throw new Error('No text extracted from document');
     }
+
+    console.log('OCR successful, text length:', ocrText.length);
 
     // Parse the OCR text to extract structured data
     const extractedData = parseOCRText(ocrText);
@@ -59,19 +79,30 @@ exports.handler = async (event, context) => {
         success: true,
         ...extractedData,
         filename: file.filename,
-        rawText: ocrText.substring(0, 1000), // First 1000 chars for debugging
       }),
     };
 
   } catch (error) {
     console.error('Error processing deed:', error);
+    
+    // Return a friendly error with empty fields so user can enter manually
     return {
-      statusCode: 500,
+      statusCode: 200,
       headers,
       body: JSON.stringify({
-        error: 'Failed to process deed',
-        message: error.message,
-        success: false,
+        success: true,
+        apn: '',
+        grantor: '',
+        trustee: '',
+        trustName: '',
+        trustDate: '',
+        propertyAddress: '',
+        city: '',
+        county: 'Los Angeles',
+        legalDescription: '',
+        mailingAddress: '',
+        error: error.message,
+        message: 'Could not extract data automatically. Please enter information manually.',
       }),
     };
   }
@@ -87,9 +118,13 @@ function performGoogleOCR(base64File) {
           },
           features: [
             {
-              type: 'DOCUMENT_TEXT_DETECTION'
+              type: 'DOCUMENT_TEXT_DETECTION',
+              maxResults: 1
             }
-          ]
+          ],
+          imageContext: {
+            languageHints: ['en']
+          }
         }
       ]
     });
@@ -101,7 +136,8 @@ function performGoogleOCR(base64File) {
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(requestBody)
-      }
+      },
+      timeout: 30000 // 30 second timeout
     };
 
     const req = https.request(options, (res) => {
@@ -113,6 +149,13 @@ function performGoogleOCR(base64File) {
 
       res.on('end', () => {
         try {
+          console.log('Google Vision API response status:', res.statusCode);
+          
+          if (res.statusCode !== 200) {
+            reject(new Error(`API returned status ${res.statusCode}: ${data}`));
+            return;
+          }
+
           const response = JSON.parse(data);
           
           if (response.error) {
@@ -121,8 +164,16 @@ function performGoogleOCR(base64File) {
           }
 
           if (response.responses && response.responses[0]) {
-            const fullTextAnnotation = response.responses[0].fullTextAnnotation;
+            const result = response.responses[0];
+            
+            if (result.error) {
+              reject(new Error(result.error.message || 'OCR processing error'));
+              return;
+            }
+
+            const fullTextAnnotation = result.fullTextAnnotation;
             if (fullTextAnnotation && fullTextAnnotation.text) {
+              console.log('Text extracted successfully');
               resolve(fullTextAnnotation.text);
             } else {
               reject(new Error('No text found in document'));
@@ -131,13 +182,20 @@ function performGoogleOCR(base64File) {
             reject(new Error('Invalid response from Google Vision API'));
           }
         } catch (e) {
+          console.error('Parse error:', e);
           reject(new Error('Failed to parse OCR response: ' + e.message));
         }
       });
     });
 
     req.on('error', (e) => {
+      console.error('Request error:', e);
       reject(new Error('OCR request failed: ' + e.message));
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('OCR request timed out'));
     });
 
     req.write(requestBody);
@@ -146,7 +204,7 @@ function performGoogleOCR(base64File) {
 }
 
 function parseOCRText(text) {
-  console.log('Parsing OCR text from Google Cloud Vision...');
+  console.log('Parsing OCR text...');
   
   return {
     apn: extractAPN(text),
@@ -177,7 +235,6 @@ function extractAPN(text) {
 }
 
 function extractGrantor(text) {
-  // The GRANTOR in the trust transfer deed is the person transferring TO the trust
   const patterns = [
     /GRANTOR\(S\)\s+([^,]+(?:,[^,]+)?),\s*(?:a|an|the)/i,
     /GRANTOR[:\s]+([^,]+(?:,[^,]+)?),\s*(?:a|an|the)/i,
