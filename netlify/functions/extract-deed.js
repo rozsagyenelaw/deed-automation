@@ -11,6 +11,9 @@ const https = require('https');
 const OCR_API_KEY = 'K87899142388957';
 
 exports.handler = async (event, context) => {
+  // Set function timeout context
+  context.callbackWaitsForEmptyEventLoop = false;
+  
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -30,6 +33,7 @@ exports.handler = async (event, context) => {
   }
 
   try {
+    console.log('=== EXTRACT DEED STARTED ===');
     const result = await multipart.parse(event);
 
     if (!result.files || result.files.length === 0) {
@@ -58,10 +62,15 @@ exports.handler = async (event, context) => {
 
     console.log('Calling OCR.space API for:', fileExtension);
     
-    // Call OCR.space API (supports PDFs directly!)
-    const ocrText = await performOCR(base64File, mimeType);
+    // Call OCR.space API with timeout protection
+    const ocrText = await Promise.race([
+      performOCR(base64File, mimeType),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('OCR timeout after 25 seconds')), 25000)
+      )
+    ]);
 
-    if (!ocrText) {
+    if (!ocrText || ocrText.length < 50) {
       throw new Error('No text extracted from document');
     }
 
@@ -148,7 +157,7 @@ function performOCR(base64File, mimeType) {
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': Buffer.byteLength(body)
       },
-      timeout: 60000
+      timeout: 20000 // Reduced from 60000
     };
 
     const req = https.request(options, (res) => {
@@ -367,7 +376,7 @@ function extractCity(text) {
     /,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:CA|California)/i,
     
     // Known cities
-    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica)/i,
+    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica|Tujunga)/i,
   ];
   
   for (const pattern of patterns) {
