@@ -5,6 +5,24 @@
 
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
+// Helper function to get month name
+function getMonthName(monthIndex) {
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+  return months[monthIndex];
+}
+
+// Helper function to format trust date
+function formatTrustDate(dateStr) {
+  try {
+    const date = new Date(dateStr);
+    const month = getMonthName(date.getMonth());
+    return `${month} ${date.getDate()}, ${date.getFullYear()}`;
+  } catch (e) {
+    return dateStr;
+  }
+}
+
 exports.handler = async (event, context) => {
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -44,6 +62,8 @@ exports.handler = async (event, context) => {
     // Default vesting if not provided
     const vesting = data.vesting || 'an unmarried man';
 
+    console.log('Creating PDF document...');
+    
     // Create PDF document
     const pdfDoc = await PDFDocument.create();
     
@@ -51,14 +71,10 @@ exports.handler = async (event, context) => {
     const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
 
-    // ==================== PAGE 1: COVER SHEET ====================
-    const coverPage = pdfDoc.addPage([612, 792]);
-    const { width, height } = coverPage.getSize();
-    const margin = 54;
-    let y = height - 60;
+    console.log('Fonts embedded');
 
     // Helper function to draw text
-    const drawText = (text, x, yPos, size = 11, fontType = font, page = coverPage) => {
+    const drawText = (text, x, yPos, size = 11, fontType = font, page) => {
       page.drawText(text, {
         x,
         y: yPos,
@@ -67,6 +83,40 @@ exports.handler = async (event, context) => {
         color: rgb(0, 0, 0),
       });
     };
+
+    // Helper for wrapped text
+    const drawWrappedText = (text, x, startY, maxWidth, size, lineHeight, fontType, page) => {
+      const words = text.split(' ');
+      let line = '';
+      let y = startY;
+
+      for (const word of words) {
+        const testLine = line + word + ' ';
+        const testWidth = fontType.widthOfTextAtSize(testLine, size);
+
+        if (testWidth > maxWidth && line !== '') {
+          page.drawText(line.trim(), { x, y, size, font: fontType, color: rgb(0, 0, 0) });
+          line = word + ' ';
+          y -= lineHeight;
+        } else {
+          line = testLine;
+        }
+      }
+
+      if (line.trim() !== '') {
+        page.drawText(line.trim(), { x, y, size, font: fontType, color: rgb(0, 0, 0) });
+        y -= lineHeight;
+      }
+
+      return y;
+    };
+
+    // ==================== PAGE 1: COVER SHEET ====================
+    console.log('Creating cover page...');
+    const coverPage = pdfDoc.addPage([612, 792]);
+    const { width, height } = coverPage.getSize();
+    const margin = 54;
+    let y = height - 60;
 
     // Cover page header
     const headerText = 'THIS COVER SHEET ADDED TO PROVIDE ADEQUATE SPACE FOR RECORDING INFORMATION';
@@ -100,7 +150,7 @@ exports.handler = async (event, context) => {
     });
     y -= 20;
 
-    // Draw vertical line (left side) - from top to this point
+    // Draw vertical line (left side)
     coverPage.drawLine({
       start: { x: width / 2, y: height - 50 },
       end: { x: width / 2, y: y + 20 },
@@ -147,7 +197,10 @@ exports.handler = async (event, context) => {
     drawText(bottomText1, (width - font.widthOfTextAtSize(bottomText1, 10)) / 2, 80, 10, font, coverPage);
     drawText(bottomText2, (width - font.widthOfTextAtSize(bottomText2, 10)) / 2, 66, 10, font, coverPage);
 
+    console.log('Cover page created');
+
     // ==================== PAGE 2: MAIN DEED ====================
+    console.log('Creating main deed page...');
     const page2 = pdfDoc.addPage([612, 792]);
     y = height - 60;
 
@@ -216,7 +269,7 @@ exports.handler = async (event, context) => {
     // Format trust date
     const trustDateFormatted = formatTrustDate(data.trustDate);
 
-    // Main granting clause with vesting (uppercase for proper format)
+    // Main granting clause with vesting (uppercase)
     const vestingText = vesting.toUpperCase();
     const grantorLine = `GRANTOR(S) ${data.grantor}, ${vestingText}, hereby GRANT(s) to ${data.trustee}, TRUSTEE OF`;
     drawText(grantorLine, margin, y, 11, font, page2);
@@ -259,7 +312,10 @@ exports.handler = async (event, context) => {
       drawText(data.mailingAddress, margin, y, 10, font, page2);
     }
 
+    console.log('Main deed page created');
+
     // ==================== PAGE 3: NOTARY ====================
+    console.log('Creating notary page...');
     const page3 = pdfDoc.addPage([612, 792]);
     y = height - 100;
 
@@ -326,12 +382,14 @@ exports.handler = async (event, context) => {
     y -= 16;
     drawText('My Commission Expires: ______________.', margin, y, 10, font, page3);
 
+    console.log('Notary page created');
+
     // Serialize PDF
     console.log('Saving PDF...');
     const pdfBytes = await pdfDoc.save();
     const base64Pdf = Buffer.from(pdfBytes).toString('base64');
 
-    console.log('PDF generated successfully');
+    console.log('PDF generated successfully, size:', pdfBytes.length);
     return {
       statusCode: 200,
       headers: {
@@ -356,48 +414,3 @@ exports.handler = async (event, context) => {
     };
   }
 };
-
-// Helper function for wrapped text
-function drawWrappedText(text, x, startY, maxWidth, size, lineHeight, fontType, page) {
-  const words = text.split(' ');
-  let line = '';
-  let y = startY;
-
-  for (const word of words) {
-    const testLine = line + word + ' ';
-    const testWidth = fontType.widthOfTextAtSize(testLine, size);
-
-    if (testWidth > maxWidth && line !== '') {
-      page.drawText(line.trim(), { x, y, size, font: fontType, color: rgb(0, 0, 0) });
-      line = word + ' ';
-      y -= lineHeight;
-    } else {
-      line = testLine;
-    }
-  }
-
-  if (line.trim() !== '') {
-    page.drawText(line.trim(), { x, y, size, font: fontType, color: rgb(0, 0, 0) });
-    y -= lineHeight;
-  }
-
-  return y;
-}
-
-// Helper function to format trust date
-function formatTrustDate(dateStr) {
-  try {
-    const date = new Date(dateStr);
-    const month = getMonthName(date.getMonth());
-    return `${month} ${date.getDate()}, ${date.getFullYear()}`;
-  } catch (e) {
-    return dateStr;
-  }
-}
-
-// Helper to get month name
-function getMonthName(monthIndex) {
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                  'July', 'August', 'September', 'October', 'November', 'December'];
-  return months[monthIndex];
-}
