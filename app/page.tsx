@@ -14,6 +14,7 @@ export default function Home() {
   
   // Form data
   const [grantor, setGrantor] = useState('');
+  const [vesting, setVesting] = useState('Single Man');
   const [trustee, setTrustee] = useState('');
   const [trustName, setTrustName] = useState('');
   const [trustDate, setTrustDate] = useState('');
@@ -25,6 +26,18 @@ export default function Home() {
   const [mailingAddress, setMailingAddress] = useState('');
 
   const counties = ['Los Angeles', 'Ventura', 'Riverside', 'San Bernardino', 'Orange'];
+  
+  const vestingOptions = [
+    'Single Man',
+    'Unmarried Man',
+    'Married Man as Sole and Separate Property',
+    'Single Woman',
+    'Unmarried Woman',
+    'Married Woman as Sole and Separate Property',
+    'Husband and Wife as Joint Tenants',
+    'Husband and Wife as Community Property',
+    'Husband and Wife as Community Property with Right of Survivorship',
+  ];
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -84,6 +97,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           grantor,
+          vesting,
           trustee,
           trustName,
           trustDate,
@@ -127,6 +141,7 @@ export default function Home() {
           apn,
           propertyAddress,
           grantor,
+          vesting,
           trustName,
         }),
       });
@@ -262,6 +277,24 @@ export default function Home() {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       required
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Vesting (How Title is Held) *
+                    </label>
+                    <select
+                      value={vesting}
+                      onChange={(e) => setVesting(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      {vestingOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
