@@ -1,5 +1,6 @@
 /**
  * Netlify serverless function for generating Trust Transfer Deeds
+ * Generates deed matching California trust transfer deed format
  */
 
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
@@ -27,7 +28,7 @@ exports.handler = async (event, context) => {
     const data = JSON.parse(event.body);
 
     // Validate required fields
-    const required = ['grantor', 'trustName', 'trustDate', 'apn', 'address', 'legalDescription'];
+    const required = ['grantor', 'trustee', 'trustName', 'trustDate', 'apn', 'propertyAddress', 'city', 'county', 'legalDescription'];
     for (const field of required) {
       if (!data[field]) {
         return {
@@ -40,26 +41,32 @@ exports.handler = async (event, context) => {
 
     // Create PDF document
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([612, 792]); // Letter size
+    
+    // Embed fonts
     const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
 
-    const { width, height } = page.getSize();
-    let yPosition = height - 50;
+    // PAGE 1: Main Deed
+    const page1 = pdfDoc.addPage([612, 792]); // Letter size
+    const { width, height } = page1.getSize();
+    
+    const margin = 54; // 0.75 inch margins
+    const contentWidth = width - (margin * 2);
+    let y = height - 80;
 
     // Helper function to draw text
-    const drawText = (text, x, y, size = 12, fontType = font) => {
+    const drawText = (text, x, yPos, size = 11, fontType = font, page = page1) => {
       page.drawText(text, {
         x,
-        y,
+        y: yPos,
         size,
         font: fontType,
         color: rgb(0, 0, 0),
       });
     };
 
-    // Helper function to draw wrapped text
-    const drawWrappedText = (text, x, startY, maxWidth, size = 12) => {
+    // Helper for wrapped text
+    const drawWrappedText = (text, x, startY, maxWidth, size = 11, lineHeight = 14, page = page1) => {
       const words = text.split(' ');
       let line = '';
       let y = startY;
@@ -69,111 +76,177 @@ exports.handler = async (event, context) => {
         const testWidth = font.widthOfTextAtSize(testLine, size);
 
         if (testWidth > maxWidth && line !== '') {
-          drawText(line.trim(), x, y, size);
+          drawText(line.trim(), x, y, size, font, page);
           line = word + ' ';
-          y -= size + 4;
+          y -= lineHeight;
         } else {
           line = testLine;
         }
       }
 
       if (line.trim() !== '') {
-        drawText(line.trim(), x, y, size);
-        y -= size + 4;
+        drawText(line.trim(), x, y, size, font, page);
+        y -= lineHeight;
       }
 
       return y;
     };
 
-    // Draw document
-    const margin = 72; // 1 inch margins
-    const contentWidth = width - (margin * 2);
-
-    // Title
-    drawText('TRUST TRANSFER DEED', width / 2 - 100, yPosition, 16, boldFont);
-    yPosition -= 30;
-
-    // Recording space (required for official recording)
-    drawText('Recording Requested By:', margin, yPosition, 10);
-    yPosition -= 15;
-    drawText('When Recorded Mail To:', margin, yPosition, 10);
-    yPosition -= 15;
-    drawText(`${data.trustName}`, margin, yPosition, 10);
-    yPosition -= 15;
-    drawText(`${data.address}`, margin, yPosition, 10);
-    yPosition -= 30;
-
-    // APN
-    drawText(`APN: ${data.apn}`, margin, yPosition, 11, boldFont);
-    yPosition -= 25;
-
-    // Main content
-    drawText('FOR VALUABLE CONSIDERATION, receipt of which is hereby acknowledged,', margin, yPosition, 11);
-    yPosition -= 20;
-
-    // Grantor
-    drawText('GRANTOR:', margin, yPosition, 11, boldFont);
-    yPosition -= 15;
-    yPosition = drawWrappedText(data.grantor, margin + 20, yPosition, contentWidth - 20, 11);
-    yPosition -= 10;
-
-    // Grantee
-    drawText('GRANTEE:', margin, yPosition, 11, boldFont);
-    yPosition -= 15;
-    yPosition = drawWrappedText(`${data.trustName}, dated ${data.trustDate}`, margin + 20, yPosition, contentWidth - 20, 11);
-    yPosition -= 10;
-
-    drawText('hereby grants and conveys to Grantee the following described real property', margin, yPosition, 11);
-    yPosition -= 15;
-    drawText(`in the County of ${data.county || 'Los Angeles'}, State of California:`, margin, yPosition, 11);
-    yPosition -= 25;
-
-    // Legal Description
-    drawText('LEGAL DESCRIPTION:', margin, yPosition, 11, boldFont);
-    yPosition -= 15;
-    yPosition = drawWrappedText(data.legalDescription, margin, yPosition, contentWidth, 10);
-    yPosition -= 20;
-
-    // Property Address
-    drawText('Commonly known as:', margin, yPosition, 11, boldFont);
-    yPosition -= 15;
-    drawText(data.address, margin, yPosition, 11);
-    yPosition -= 30;
-
-    // Signature section
-    if (yPosition < 150) {
-      page = pdfDoc.addPage([612, 792]);
-      yPosition = height - 50;
+    // Recording section (top right)
+    const recordingX = width - 250;
+    drawText('RECORDING REQUESTED BY', recordingX, y, 9);
+    y -= 12;
+    drawText(data.trustName, recordingX, y, 9);
+    y -= 20;
+    
+    drawText('WHEN RECORDED MAIL TO', recordingX, y, 9);
+    y -= 12;
+    drawText(data.trustee || data.grantor.split(',')[0], recordingX, y, 9);
+    y -= 12;
+    if (data.mailingAddress) {
+      const mailLines = data.mailingAddress.split(',');
+      for (const line of mailLines) {
+        drawText(line.trim(), recordingX, y, 9);
+        y -= 12;
+      }
     }
 
-    drawText('EXECUTED this _____ day of ______________, 20___', margin, yPosition, 11);
-    yPosition -= 40;
+    // Reset Y for main content
+    y = height - 140;
 
-    drawText('GRANTOR:', margin, yPosition, 11, boldFont);
-    yPosition -= 50;
+    // APN and Escrow
+    drawText(`APN: ${data.apn}`, margin, y, 11);
+    drawText('Escrow No. ______________', margin + 200, y, 11);
+    y -= 30;
 
-    drawText('_________________________________________', margin, yPosition, 11);
-    yPosition -= 15;
-    drawText('Signature', margin, yPosition, 10);
-    yPosition -= 30;
+    // Title
+    const title = 'TRUST TRANSFER DEED';
+    const titleWidth = boldFont.widthOfTextAtSize(title, 14);
+    drawText(title, (width - titleWidth) / 2, y, 14, boldFont);
+    y -= 20;
 
-    drawText('_________________________________________', margin, yPosition, 11);
-    yPosition -= 15;
-    drawText('Printed Name', margin, yPosition, 10);
-    yPosition -= 40;
+    // Subtitle
+    const subtitle = '(Grant Deed Excluded from Reappraisal Under Proposition 13,';
+    const subtitle2 = 'i.e., Calif. Const. Art 13A Section 1, et seq.)';
+    drawText(subtitle, (width - font.widthOfTextAtSize(subtitle, 10)) / 2, y, 10);
+    y -= 14;
+    drawText(subtitle2, (width - font.widthOfTextAtSize(subtitle2, 10)) / 2, y, 10);
+    y -= 25;
 
-    // Notary Section
-    drawText('STATE OF CALIFORNIA', margin, yPosition, 11, boldFont);
-    yPosition -= 15;
-    drawText('COUNTY OF ____________________', margin, yPosition, 11, boldFont);
-    yPosition -= 25;
+    // Documentary transfer tax
+    drawText('DOCUMENTARY TRANSFER TAX IS: $ 0.00', margin, y, 11, boldFont);
+    y -= 20;
 
-    const notaryText = 'On _____________ before me, _____________________, Notary Public, personally appeared ' +
-                       '_____________________, who proved to me on the basis of satisfactory evidence to be the ' +
-                       'person(s) whose name(s) is/are subscribed to the within instrument.';
-    yPosition = drawWrappedText(notaryText, margin, yPosition, contentWidth, 10);
+    // Declaration
+    const declText = 'The undersigned Grantor(s) declare(s) under penalty of perjury that the foregoing is true';
+    drawText(declText, margin, y, 10);
+    y -= 12;
+    drawText('and correct: THERE IS NO CONSIDERATION FOR THIS TRANSFER.', margin, y, 10);
+    y -= 18;
 
-    // Serialize PDF to bytes
+    // Trust transfer statement
+    drawText('This is a Trust Transfer under section 62 of the Revenue and Taxation Code and', margin, y, 10);
+    y -= 12;
+    drawText('Grantor(s) has/have checked the applicable exclusions:', margin, y, 10);
+    y -= 18;
+
+    // Checkbox
+    drawText('[X] This conveyance transfers the Grantors interest into his or her revocable trust, R&T 11930.', margin, y, 10);
+    y -= 25;
+
+    // Main granting clause
+    const grantorText = `GRANTOR(S) ${data.grantor}, hereby GRANT(s) to ${data.trustee}, TRUSTEE OF THE ${data.trustName} DATED ${data.trustDate}, AND ANY AMENDMENTS THERETO the real property in the CITY OF ${data.city.toUpperCase()} County of ${data.county} State of CA, described as:`;
+    
+    y = drawWrappedText(grantorText, margin, y, contentWidth, 11, 14);
+    y -= 10;
+
+    // Legal Description
+    y = drawWrappedText(data.legalDescription, margin, y, contentWidth, 10, 13);
+    y -= 15;
+
+    // Commonly known as
+    drawText('Commonly known as: ' + data.propertyAddress, margin, y, 11);
+    y -= 30;
+
+    // Date
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    drawText(`Dated: ${today}`, margin, y, 11);
+    y -= 40;
+
+    // Signature line
+    drawText('_________________________________', margin, y, 11);
+    y -= 14;
+    drawText(data.grantor.split(',')[0], margin, y, 11);
+    y -= 30;
+
+    // Mail tax statements section
+    drawText('MAIL TAX STATEMENTS TO:', margin, y, 10, boldFont);
+    y -= 14;
+    if (data.mailingAddress) {
+      const mailLines = data.mailingAddress.split(',');
+      for (const line of mailLines) {
+        drawText(line.trim(), margin, y, 10);
+        y -= 12;
+      }
+    } else {
+      drawText(data.trustee || data.grantor.split(',')[0], margin, y, 10);
+      y -= 12;
+      drawText(data.propertyAddress, margin, y, 10);
+    }
+
+    // PAGE 2: Notary Acknowledgment
+    const page2 = pdfDoc.addPage([612, 792]);
+    y = height - 180;
+
+    // Notary title
+    const notaryTitle = 'ACKNOWLEDGMENT';
+    const notaryTitleWidth = boldFont.widthOfTextAtSize(notaryTitle, 14);
+    drawText(notaryTitle, (width - notaryTitleWidth) / 2, y, 14, boldFont, page2);
+    y -= 40;
+
+    drawText('STATE OF CALIFORNIA', margin, y, 11, font, page2);
+    y -= 20;
+    drawText(') SS.', margin + 200, y, 11, font, page2);
+    y -= 16;
+    drawText('COUNTY OF _____________', margin, y, 11, font, page2);
+    y -= 30;
+
+    // Notary text
+    const notaryText = `On ________________, before me, ___________________________________, a Notary Public, personally appeared ____________________________________________, who proved to me on the basis of satisfactory evidence to be the person whose name is subscribed to the within instrument acknowledged to me that he/she/they executed the same in his/her/their authorized capacity, and that by his/her/their signature on the instrument the person, or the entity upon behalf of which the person acted, executed the instrument.`;
+    
+    y = drawWrappedText(notaryText, margin, y, contentWidth, 10, 13, page2);
+    y -= 20;
+
+    drawText('I certify under PENALTY OF PERJURY under the laws of the State of California that the', margin, y, 10, font, page2);
+    y -= 13;
+    drawText('foregoing paragraph is true and correct.', margin, y, 10, font, page2);
+    y -= 25;
+
+    drawText('WITNESS my hand and official seal.', margin, y, 10, font, page2);
+    y -= 40;
+
+    drawText('Notary Public __________________________________  (SEAL)', margin, y, 10, font, page2);
+    y -= 20;
+    drawText('Print Name of Notary _______________________________', margin, y, 10, font, page2);
+    y -= 20;
+    drawText('My Commission Expires: ______________.', margin, y, 10, font, page2);
+    y -= 40;
+
+    // Disclaimer box
+    const disclaimerY = y - 60;
+    page2.drawRectangle({
+      x: margin,
+      y: disclaimerY,
+      width: contentWidth,
+      height: 50,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1,
+    });
+
+    const disclaimerText = 'A notary public or other officer completing this certificate verifies only the identity of the individual who signed the document to which this certificate is attached, and not the truthfulness, accuracy, or validity of that document.';
+    drawWrappedText(disclaimerText, margin + 10, disclaimerY + 35, contentWidth - 20, 9, 11, page2);
+
+    // Serialize PDF
     const pdfBytes = await pdfDoc.save();
     const base64Pdf = Buffer.from(pdfBytes).toString('base64');
 
@@ -181,13 +254,10 @@ exports.handler = async (event, context) => {
       statusCode: 200,
       headers: {
         ...headers,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/pdf',
       },
-      body: JSON.stringify({
-        success: true,
-        pdf: base64Pdf,
-        filename: `Trust_Transfer_Deed_${data.apn.replace(/[^0-9]/g, '')}.pdf`,
-      }),
+      body: base64Pdf,
+      isBase64Encoded: true,
     };
 
   } catch (error) {
