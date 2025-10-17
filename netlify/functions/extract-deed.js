@@ -175,7 +175,6 @@ function performOCR(base64File, mimeType) {
               if (response.ParsedResults && response.ParsedResults.length > 0) {
                 const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
                 console.log('Extracted text from available pages, length:', text.length);
-                console.log('First 1000 chars:', text.substring(0, 1000));
                 resolve(text);
                 return;
               }
@@ -188,7 +187,7 @@ function performOCR(base64File, mimeType) {
           if (response.ParsedResults && response.ParsedResults.length > 0) {
             const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
             console.log('Text extracted successfully, length:', text.length);
-            console.log('First 1000 chars:', text.substring(0, 1000));
+            console.log('First 2000 chars:', text.substring(0, 2000));
             resolve(text);
           } else {
             reject(new Error('No text extracted from document'));
@@ -241,12 +240,9 @@ function parseOCRText(text) {
 
 function extractAPN(text) {
   const patterns = [
-    // Standard APN format: 1234-567-890
+    /AP#:\s*([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})/i,
     /APN[:\s#]*([0-9]{4}[-\s]?[0-9]{3}[-\s]?[0-9]{3})/i,
     /Assessor['\s]?s?\s+Parcel\s+(?:Number|No\.?)[:\s]*([0-9\-\s]+)/i,
-    /Parcel\s*(?:No\.?|Number|#)[:\s]*([0-9\-\s]+)/i,
-    /A\.?\s*P\.?\s*N\.?[:\s]*([0-9\-\s]+)/i,
-    // Flexible: any sequence of 8-12 digits with hyphens
     /\b([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})\b/,
   ];
   
@@ -254,9 +250,7 @@ function extractAPN(text) {
     const match = text.match(pattern);
     if (match) {
       let apn = match[1].trim();
-      // Clean and format
       apn = apn.replace(/\s+/g, '').replace(/[^0-9\-]/g, '');
-      // Ensure proper format
       if (apn.length >= 10) {
         console.log('Found APN:', apn);
         return apn;
@@ -267,8 +261,11 @@ function extractAPN(text) {
 }
 
 function extractGrantor(text) {
-  // Extract GRANTEE from original deed (becomes grantor in trust transfer)
+  // Extract GRANTEE from original deed
   const patterns = [
+    // From "WHEN RECORDED MAIL TO:" section
+    /WHEN RECORDED MAIL TO:\s*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+    
     // "GRANTEE: Arthur Avagyants"
     /GRANTEE[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:,|\s+a|\s+an|\s*$)/i,
     
@@ -277,18 +274,13 @@ function extractGrantor(text) {
     
     // "Arthur Avagyants, a married man"
     /\b([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:a|an)\s+(?:married|single|unmarried|widowed)/i,
-    
-    // From mailing address
-    /(?:Mail|Return|Send)[^\n]*?(?:to|at)[:\s]*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
   ];
   
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
       let name = match[1].trim();
-      // Clean up
       name = name.replace(/,.*$/, '').trim();
-      // Validate it's a real name (2-4 words, proper case)
       if (name.split(/\s+/).length >= 2 && name.split(/\s+/).length <= 4) {
         console.log('Found GRANTEE (becomes grantor):', name);
         return name;
@@ -313,31 +305,49 @@ function extractTrustDate(text) {
 }
 
 function extractPropertyAddress(text) {
-  const patterns = [
-    // "6821 Saint Estaban Street"
-    /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?)\b/i,
-    
-    // "commonly known as: 123 Main St"
-    /(?:commonly\s+known\s+as|located\s+at|situated\s+at)[:\s]*([0-9]+[^\n,]+?(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?)/i,
-    
-    // "property at 123 Main Street"
-    /property\s+at\s+([0-9]+[^\n,]+)/i,
-  ];
+  // Pattern to match: "6821 Saint Estaban Street Los Angeles (Tujunga area), CA 91042"
+  const fullAddressPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s*\([^)]+\))?,?\s+(?:CA|California)\s+[0-9]{5})/i;
   
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      let address = match[1].trim();
-      // Clean up
-      address = address.replace(/[,.]$/, '').trim();
-      // Remove city/state if included
-      address = address.replace(/,?\s*(?:Los Angeles|Ventura|Riverside|San Bernardino|Orange).*$/i, '').trim();
+  let match = text.match(fullAddressPattern);
+  if (match) {
+    let address = match[1].trim();
+    // Clean up extra spaces
+    address = address.replace(/\s+/g, ' ');
+    console.log('Found full property address:', address);
+    return address;
+  }
+  
+  // Try without parenthetical
+  const addressWithZipPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,?\s+(?:CA|California)\s+[0-9]{5})/i;
+  
+  match = text.match(addressWithZipPattern);
+  if (match) {
+    let address = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found property address with zip:', address);
+    return address;
+  }
+  
+  // Fallback: street + city + state (manually add zip if found)
+  const streetPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?)\b/i;
+  
+  match = text.match(streetPattern);
+  if (match) {
+    let address = match[1].trim();
+    console.log('Found street address:', address);
+    
+    // Try to append city, state, zip
+    const city = extractCity(text);
+    if (city) {
+      address += `, ${city}, CA`;
       
-      if (address.length > 10) {
-        console.log('Found Property Address:', address);
-        return address;
+      // Look for zip code
+      const zipMatch = text.match(/\b[0-9]{5}\b/);
+      if (zipMatch) {
+        address += ` ${zipMatch[0]}`;
       }
     }
+    
+    return address;
   }
   
   return '';
@@ -345,13 +355,16 @@ function extractPropertyAddress(text) {
 
 function extractCity(text) {
   const patterns = [
+    // "Los Angeles (Tujunga area)"
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*\([^)]+\),?\s+(?:CA|California)/i,
+    
     // "City of Los Angeles"
     /City\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
     
     // ", Los Angeles, CA"
     /,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:CA|California)/i,
     
-    // Look for known cities
+    // Known cities
     /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica)/i,
   ];
   
@@ -359,7 +372,6 @@ function extractCity(text) {
     const match = text.match(pattern);
     if (match) {
       const city = match[1].trim();
-      // Validate it's not garbage
       if (city.length >= 3 && city.length <= 30 && !/[0-9]/.test(city)) {
         console.log('Found City:', city);
         return city;
@@ -388,58 +400,74 @@ function extractCounty(text) {
 }
 
 function extractLegalDescription(text) {
-  // Legal descriptions have many formats. Let's try multiple approaches.
+  // Grant deeds typically have legal description after "receipt of which is hereby acknowledged"
+  // Pattern: Look for text between acknowledgment and APN or end markers
   
-  // Pattern 1: Look for "Lot X" followed by description
-  const lotPattern = /\b(Lot\s+[0-9]+[^\.]*?(?:Map|Tract|Book|Page)[^\n]{20,500})/i;
-  let match = text.match(lotPattern);
-  if (match) {
-    const desc = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found Legal Description (Lot pattern):', desc.substring(0, 100));
-    return desc;
-  }
+  // Find start point
+  const startMarkers = [
+    /receipt\s+of\s+which\s+is\s+hereby\s+acknowledged[,\s]+(?:hereby\s+)?(?:grant|convey)[s]?\s+to[^:]+:\s*/i,
+    /the\s+following\s+(?:described\s+)?(?:real\s+)?property[:\s]*/i,
+    /property\s+is\s+(?:situated|located)\s+in[^:]+:\s*/i,
+  ];
   
-  // Pattern 2: Look for "described as" followed by text
-  const describedPattern = /(?:legally\s+)?described\s+as\s+follows?[:\s]*([^\.]+(?:\.[^\.]+){0,3})/i;
-  match = text.match(describedPattern);
-  if (match) {
-    let desc = match[1].trim();
-    // Stop at common endpoints
-    desc = desc.replace(/(?:APN|Assessor|commonly\s+known|situate).*/i, '').trim();
-    desc = desc.replace(/\s+/g, ' ');
-    if (desc.length > 30) {
-      console.log('Found Legal Description (described as):', desc.substring(0, 100));
-      return desc;
+  let startIndex = -1;
+  for (const pattern of startMarkers) {
+    const match = text.match(pattern);
+    if (match) {
+      startIndex = match.index + match[0].length;
+      console.log('Found legal description start at index:', startIndex);
+      break;
     }
   }
   
-  // Pattern 3: Look for parcel/lot numbers with map references
-  const parcelPattern = /\b((?:Parcel|Lot)\s+[0-9]+[^\.]*?(?:Map|Tract|recorded|filed)[^\n]{20,500})/i;
-  match = text.match(parcelPattern);
-  if (match) {
-    const desc = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found Legal Description (Parcel pattern):', desc.substring(0, 100));
-    return desc;
-  }
-  
-  // Pattern 4: Look for legal description section markers
-  const sectionPattern = /LEGAL\s+DESCRIPTION[:\s]*([^\n]+(?:\n[^\n]+){0,10})/i;
-  match = text.match(sectionPattern);
-  if (match) {
-    let desc = match[1].trim();
-    desc = desc.replace(/(?:APN|Assessor|commonly\s+known).*/i, '').trim();
-    desc = desc.replace(/\s+/g, ' ');
-    if (desc.length > 30) {
-      console.log('Found Legal Description (section marker):', desc.substring(0, 100));
-      return desc;
+  if (startIndex === -1) {
+    // Try alternative: look for "Lot" keyword
+    const lotMatch = text.match(/\b(Lot\s+[0-9]+)/i);
+    if (lotMatch) {
+      startIndex = lotMatch.index;
+      console.log('Found Lot at index:', startIndex);
     }
   }
   
-  console.log('No legal description found');
+  if (startIndex === -1) {
+    console.log('No legal description start marker found');
+    return '';
+  }
+  
+  // Find end point
+  const endMarkers = [
+    /(?:APN|AP#|Assessor)/i,
+    /EXCEPTING/i,
+    /(?:This\s+)?(?:Grant|conveyance)\s+is\s+made/i,
+  ];
+  
+  let endIndex = text.length;
+  const searchText = text.substring(startIndex);
+  
+  for (const pattern of endMarkers) {
+    const match = searchText.match(pattern);
+    if (match && match.index < (endIndex - startIndex)) {
+      endIndex = startIndex + match.index;
+      console.log('Found legal description end at index:', endIndex);
+      break;
+    }
+  }
+  
+  // Extract and clean
+  let legalDesc = text.substring(startIndex, endIndex).trim();
+  legalDesc = legalDesc.replace(/\s+/g, ' '); // Normalize whitespace
+  
+  // Validate length
+  if (legalDesc.length >= 30 && legalDesc.length <= 2000) {
+    console.log('Found Legal Description, length:', legalDesc.length);
+    return legalDesc;
+  }
+  
+  console.log('Legal description too short or too long:', legalDesc.length);
   return '';
 }
 
 function extractMailingAddress(text) {
-  // Not used - we just use property address
+  // Not used - we use property address
   return '';
 }
