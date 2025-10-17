@@ -43,20 +43,30 @@ exports.handler = async (event, context) => {
   }
 
   try {
+    console.log('=== GENERATE DEED FUNCTION CALLED ===');
+    
     const data = JSON.parse(event.body);
-    console.log('Received data:', data);
+    console.log('Parsed data:', JSON.stringify(data, null, 2));
 
     // Validate required fields
     const required = ['grantor', 'trustee', 'trustName', 'trustDate', 'apn', 'propertyAddress', 'city', 'county', 'legalDescription'];
+    const missing = [];
+    
     for (const field of required) {
-      if (!data[field]) {
-        console.error(`Missing field: ${field}`);
-        return {
-          statusCode: 400,
-          headers,
-          body: JSON.stringify({ error: `Missing required field: ${field}` }),
-        };
+      if (!data[field] || data[field].trim() === '') {
+        missing.push(field);
       }
+    }
+
+    if (missing.length > 0) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ 
+          error: `Missing required fields: ${missing.join(', ')}`,
+          missingFields: missing 
+        }),
+      };
     }
 
     // Default vesting if not provided
@@ -75,7 +85,7 @@ exports.handler = async (event, context) => {
 
     // Helper function to draw text
     const drawText = (text, x, yPos, size = 11, fontType = font, page) => {
-      page.drawText(text, {
+      page.drawText(String(text), {
         x,
         y: yPos,
         size,
@@ -86,7 +96,7 @@ exports.handler = async (event, context) => {
 
     // Helper for wrapped text
     const drawWrappedText = (text, x, startY, maxWidth, size, lineHeight, fontType, page) => {
-      const words = text.split(' ');
+      const words = String(text).split(' ');
       let line = '';
       let y = startY;
 
@@ -150,7 +160,7 @@ exports.handler = async (event, context) => {
     });
     y -= 20;
 
-    // Draw vertical line (left side)
+    // Draw vertical line
     coverPage.drawLine({
       start: { x: width / 2, y: height - 50 },
       end: { x: width / 2, y: y + 20 },
@@ -169,27 +179,26 @@ exports.handler = async (event, context) => {
     y -= 40;
 
     // Senate Bill 2 text
-    const sb2Text = 'Pursuant to Senate Bill 2 – Building Homes and Jobs Act (GC Code Section 27388.1), effective January 1, 2018, a fee of seventy-five dollars ($75.00) shall be paid at the time of recording of every real estate instrument, paper, or notice required or permitted by law to be recorded, except those expressly exempted from payment of recording fees, per each single transaction per parcel of real property. The fee imposed by this section shall not exceed two hundred twenty-five dollars ($225.00).';
+    const sb2Text = 'Pursuant to Senate Bill 2 - Building Homes and Jobs Act (GC Code Section 27388.1), effective January 1, 2018, a fee of seventy-five dollars ($75.00) shall be paid at the time of recording of every real estate instrument, paper, or notice required or permitted by law to be recorded, except those expressly exempted from payment of recording fees, per each single transaction per parcel of real property. The fee imposed by this section shall not exceed two hundred twenty-five dollars ($225.00).';
     
     y = drawWrappedText(sb2Text, margin, y, width - (margin * 2), 10, 13, font, coverPage);
     y -= 20;
 
-    // Checkboxes
-    drawText('☐ Exempt from fee per GC 27388.1 (a) (2); recorded concurrently "in connection with" a transfer subject to', margin, y, 9, font, coverPage);
+    // Checkboxes (using ASCII characters only!)
+    drawText('[ ] Exempt from fee per GC 27388.1 (a) (2); recorded concurrently "in connection with" a transfer', margin, y, 9, font, coverPage);
     y -= 11;
-    drawText('    the imposition of documentary transfer tax (DTT).', margin, y, 9, font, coverPage);
+    drawText('     subject to the imposition of documentary transfer tax (DTT).', margin, y, 9, font, coverPage);
     y -= 16;
 
-    drawText('☒ Exempt from fee per GC 27388.1 (a) (2); recorded concurrently "in connection with" a transfer of real', margin, y, 9, font, coverPage);
+    drawText('[X] Exempt from fee per GC 27388.1 (a) (2); recorded concurrently "in connection with" a transfer of', margin, y, 9, font, coverPage);
     y -= 11;
-    drawText('    property that is a residential dwelling to an owner-occupier.', margin, y, 9, font, coverPage);
+    drawText('     real property that is a residential dwelling to an owner-occupier.', margin, y, 9, font, coverPage);
     y -= 16;
 
-    drawText('☐ Exempt from fee per GC 27388.1 (a) (1); fee cap of $225.00 reached.', margin, y, 9, font, coverPage);
+    drawText('[ ] Exempt from fee per GC 27388.1 (a) (1); fee cap of $225.00 reached.', margin, y, 9, font, coverPage);
     y -= 16;
 
-    drawText('☐ Exempt from the fee per GC 27388.1 (a) (1); not related to real property.', margin, y, 9, font, coverPage);
-    y -= 40;
+    drawText('[ ] Exempt from the fee per GC 27388.1 (a) (1); not related to real property.', margin, y, 9, font, coverPage);
 
     // Bottom text
     const bottomText1 = 'THIS COVER SHEET ADDED TO PROVIDE ADEQUATE SPACE FOR RECORDING INFORMATION';
@@ -230,7 +239,7 @@ exports.handler = async (event, context) => {
     y = height - 150;
 
     // APN
-    drawText(`APN: ${data.apn}`, margin, y, 11, font, page2);
+    drawText('APN: ' + data.apn, margin, y, 11, font, page2);
     drawText('Escrow No. ______________', margin + 250, y, 11, font, page2);
     y -= 30;
 
@@ -269,17 +278,17 @@ exports.handler = async (event, context) => {
     // Format trust date
     const trustDateFormatted = formatTrustDate(data.trustDate);
 
-    // Main granting clause with vesting (uppercase)
+    // Main granting clause with vesting
     const vestingText = vesting.toUpperCase();
-    const grantorLine = `GRANTOR(S) ${data.grantor}, ${vestingText}, hereby GRANT(s) to ${data.trustee}, TRUSTEE OF`;
+    const grantorLine = 'GRANTOR(S) ' + data.grantor + ', ' + vestingText + ', hereby GRANT(s) to ' + data.trustee + ', TRUSTEE OF';
     drawText(grantorLine, margin, y, 11, font, page2);
     y -= 14;
     
-    const trustLine = `THE ${data.trustName} DATED ${trustDateFormatted}, AND ANY AMENDMENTS THERETO`;
+    const trustLine = 'THE ' + data.trustName + ' DATED ' + trustDateFormatted + ', AND ANY AMENDMENTS THERETO';
     drawText(trustLine, margin, y, 11, font, page2);
     y -= 18;
 
-    const propertyLine = `the real property in the CITY OF ${data.city.toUpperCase()} County of ${data.county} State of CA, described as:`;
+    const propertyLine = 'the real property in the CITY OF ' + data.city.toUpperCase() + ' County of ' + data.county + ' State of CA, described as:';
     drawText(propertyLine, margin, y, 11, font, page2);
     y -= 18;
 
@@ -288,13 +297,13 @@ exports.handler = async (event, context) => {
     y -= 18;
 
     // Commonly known as
-    drawText(`Commonly known as: ${data.propertyAddress}`, margin, y, 11, font, page2);
+    drawText('Commonly known as: ' + data.propertyAddress, margin, y, 11, font, page2);
     y -= 25;
 
     // Date
     const today = new Date();
-    const dateStr = `${getMonthName(today.getMonth())} ${today.getDate()}, ${today.getFullYear()}`;
-    drawText(`Dated: ${dateStr}`, margin, y, 11, font, page2);
+    const dateStr = getMonthName(today.getMonth()) + ' ' + today.getDate() + ', ' + today.getFullYear();
+    drawText('Dated: ' + dateStr, margin, y, 11, font, page2);
     y -= 35;
 
     // Signature line
@@ -329,13 +338,9 @@ exports.handler = async (event, context) => {
       borderWidth: 1,
     });
 
-    const disclaimerTop = 'A notary public or other officer completing this certificate verifies only the identity of the';
-    const disclaimerTop2 = 'individual who signed the document to which this certificate is attached, and not the';
-    const disclaimerTop3 = 'truthfulness, accuracy, or validity of that document.';
-    
-    drawText(disclaimerTop, margin + 10, height - 60, 9, font, page3);
-    drawText(disclaimerTop2, margin + 10, height - 72, 9, font, page3);
-    drawText(disclaimerTop3, margin + 10, height - 84, 9, font, page3);
+    drawText('A notary public or other officer completing this certificate verifies only the identity of the', margin + 10, height - 60, 9, font, page3);
+    drawText('individual who signed the document to which this certificate is attached, and not the', margin + 10, height - 72, 9, font, page3);
+    drawText('truthfulness, accuracy, or validity of that document.', margin + 10, height - 84, 9, font, page3);
 
     y = height - 120;
 
@@ -348,24 +353,17 @@ exports.handler = async (event, context) => {
     y -= 25;
 
     // Notary text
-    const notaryLine1 = 'On ________________, before me, ___________________________________, a Notary Public,';
-    const notaryLine2 = 'personally appeared ____________________________________________, who proved to me on';
-    const notaryLine3 = 'the basis of satisfactory evidence to be the person whose name is subscribed to the within';
-    const notaryLine4 = 'instrument acknowledged to me that he/she/they executed the same in his/her/their';
-    const notaryLine5 = 'authorized capacity, and that by his/her/their signature on the instrument the person, or';
-    const notaryLine6 = 'the entity upon behalf of which the person acted, executed the instrument.';
-    
-    drawText(notaryLine1, margin, y, 10, font, page3);
+    drawText('On ________________, before me, ___________________________________, a Notary Public,', margin, y, 10, font, page3);
     y -= 12;
-    drawText(notaryLine2, margin, y, 10, font, page3);
+    drawText('personally appeared ____________________________________________, who proved to me on', margin, y, 10, font, page3);
     y -= 12;
-    drawText(notaryLine3, margin, y, 10, font, page3);
+    drawText('the basis of satisfactory evidence to be the person whose name is subscribed to the within', margin, y, 10, font, page3);
     y -= 12;
-    drawText(notaryLine4, margin, y, 10, font, page3);
+    drawText('instrument acknowledged to me that he/she/they executed the same in his/her/their', margin, y, 10, font, page3);
     y -= 12;
-    drawText(notaryLine5, margin, y, 10, font, page3);
+    drawText('authorized capacity, and that by his/her/their signature on the instrument the person, or', margin, y, 10, font, page3);
     y -= 12;
-    drawText(notaryLine6, margin, y, 10, font, page3);
+    drawText('the entity upon behalf of which the person acted, executed the instrument.', margin, y, 10, font, page3);
     y -= 20;
 
     drawText('I certify under PENALTY OF PERJURY under the laws of the State of California that the', margin, y, 10, font, page3);
@@ -389,7 +387,7 @@ exports.handler = async (event, context) => {
     const pdfBytes = await pdfDoc.save();
     const base64Pdf = Buffer.from(pdfBytes).toString('base64');
 
-    console.log('PDF generated successfully, size:', pdfBytes.length);
+    console.log('PDF generated successfully');
     return {
       statusCode: 200,
       headers: {
@@ -401,14 +399,13 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('Error generating deed:', error);
+    console.error('ERROR:', error.message);
     console.error('Stack:', error.stack);
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
-        error: 'Failed to generate deed',
-        message: error.message,
+        error: error.message,
         stack: error.stack,
       }),
     };
