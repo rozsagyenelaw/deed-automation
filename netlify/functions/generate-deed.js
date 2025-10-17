@@ -136,36 +136,43 @@ exports.handler = async (event, context) => {
     drawText(headerText2, (width - font.widthOfTextAtSize(headerText2, 10)) / 2, y, 10, font, coverPage);
     y -= 30;
 
-    // Recording requested by section (LEFT SIDE ONLY - before vertical line)
+    // Recording requested by section (LEFT SIDE ONLY - constrained to left of vertical line)
+    const leftColumnWidth = (width / 2) - margin - 10; // Leave space for vertical line
+    
     drawText('RECORDING REQUESTED BY', margin, y, 11, boldFont, coverPage);
     y -= 14;
-    drawText(data.trustName.toUpperCase(), margin, y, 11, font, coverPage);
-    y -= 20;
+    
+    // Wrap trust name if needed
+    y = drawWrappedText(data.trustName.toUpperCase(), margin, y, leftColumnWidth, 11, 14, font, coverPage);
+    y -= 6;
 
     drawText('WHEN RECORDED MAIL TO', margin, y, 11, boldFont, coverPage);
     y -= 14;
-    drawText((data.trustee || data.grantor).toUpperCase(), margin, y, 11, font, coverPage);
-    y -= 14;
+    
+    // Wrap trustee name if needed
+    y = drawWrappedText((data.trustee || data.grantor).toUpperCase(), margin, y, leftColumnWidth, 11, 14, font, coverPage);
+    y -= 6;
+    
+    // Wrap mailing address if needed
     if (data.mailingAddress) {
-      drawText(data.mailingAddress.toUpperCase(), margin, y, 11, font, coverPage);
+      y = drawWrappedText(data.mailingAddress.toUpperCase(), margin, y, leftColumnWidth, 11, 14, font, coverPage);
     }
-    y -= 30;
+    y -= 20;
 
     // Draw horizontal line
+    const horizontalLineY = y;
     coverPage.drawLine({
-      start: { x: margin, y: y },
-      end: { x: width - margin, y: y },
+      start: { x: margin, y: horizontalLineY },
+      end: { x: width - margin, y: horizontalLineY },
       thickness: 1,
       color: rgb(0, 0, 0),
     });
-    
-    const lineY = y; // Save this Y position for vertical line
     y -= 20;
 
-    // Draw vertical line (should NOT cut through text)
+    // Draw vertical line (from top to horizontal line, centered)
     coverPage.drawLine({
-      start: { x: width / 2, y: height - 50 },
-      end: { x: width / 2, y: lineY },
+      start: { x: width / 2, y: height - 150 },
+      end: { x: width / 2, y: horizontalLineY },
       thickness: 1,
       color: rgb(0, 0, 0),
     });
@@ -180,7 +187,7 @@ exports.handler = async (event, context) => {
     drawText(title, (width - boldFont.widthOfTextAtSize(title, 14)) / 2, y, 14, boldFont, coverPage);
     y -= 40;
 
-    // Senate Bill 2 text (wrap within margins)
+    // Senate Bill 2 text
     const sb2Text = 'Pursuant to Senate Bill 2 - Building Homes and Jobs Act (GC Code Section 27388.1), effective January 1, 2018, a fee of seventy-five dollars ($75.00) shall be paid at the time of recording of every real estate instrument, paper, or notice required or permitted by law to be recorded, except those expressly exempted from payment of recording fees, per each single transaction per parcel of real property. The fee imposed by this section shall not exceed two hundred twenty-five dollars ($225.00).';
     
     y = drawWrappedText(sb2Text, margin, y, width - (margin * 2), 10, 13, font, coverPage);
@@ -215,8 +222,28 @@ exports.handler = async (event, context) => {
     const page2 = pdfDoc.addPage([612, 792]);
     y = height - 60;
 
-    // Recording box - LARGER to fit all content
-    const boxHeight = 110;
+    // Calculate box height dynamically based on content
+    const boxContentWidth = width - (margin * 2) - 20; // Leave padding inside box
+    let boxContentHeight = 20; // Start with padding
+    
+    // Measure each line
+    boxContentHeight += 14; // RECORDING REQUESTED BY
+    const trustNameLines = Math.ceil(boldFont.widthOfTextAtSize(data.trustName.toUpperCase(), 11) / boxContentWidth);
+    boxContentHeight += trustNameLines * 14;
+    boxContentHeight += 6; // spacing
+    boxContentHeight += 14; // WHEN RECORDED MAIL TO
+    const trusteeLines = Math.ceil(font.widthOfTextAtSize((data.trustee || data.grantor).toUpperCase(), 11) / boxContentWidth);
+    boxContentHeight += trusteeLines * 14;
+    if (data.mailingAddress) {
+      const addressLines = Math.ceil(font.widthOfTextAtSize(data.mailingAddress.toUpperCase(), 11) / boxContentWidth);
+      boxContentHeight += addressLines * 14;
+    }
+    boxContentHeight += 10; // bottom padding
+    
+    // Minimum box height
+    const boxHeight = Math.max(120, boxContentHeight);
+
+    // Draw recording box
     page2.drawRectangle({
       x: margin,
       y: height - 60 - boxHeight,
@@ -226,18 +253,19 @@ exports.handler = async (event, context) => {
       borderWidth: 1,
     });
 
-    // Content INSIDE the box
+    // Content INSIDE the box with wrapping
     drawText('RECORDING REQUESTED BY', margin + 10, y, 11, boldFont, page2);
     y -= 14;
-    drawText(data.trustName.toUpperCase(), margin + 10, y, 11, font, page2);
-    y -= 20;
+    y = drawWrappedText(data.trustName.toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
+    y -= 6;
     
     drawText('WHEN RECORDED MAIL TO', margin + 10, y, 11, boldFont, page2);
     y -= 14;
-    drawText((data.trustee || data.grantor).toUpperCase(), margin + 10, y, 11, font, page2);
-    y -= 14;
+    y = drawWrappedText((data.trustee || data.grantor).toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
+    y -= 6;
+    
     if (data.mailingAddress) {
-      drawText(data.mailingAddress.toUpperCase(), margin + 10, y, 11, font, page2);
+      y = drawWrappedText(data.mailingAddress.toUpperCase(), margin + 10, y, boxContentWidth, 11, 14, font, page2);
     }
 
     // Continue BELOW the box
@@ -283,21 +311,20 @@ exports.handler = async (event, context) => {
     // Format trust date
     const trustDateFormatted = formatTrustDate(data.trustDate);
 
-    // Main granting clause with vesting (ALL CAPS for data)
+    // Main granting clause with vesting
     const vestingText = vesting.toUpperCase();
     const grantorLine = 'GRANTOR(S) ' + data.grantor.toUpperCase() + ', ' + vestingText + ', hereby GRANT(s) to ' + data.trustee.toUpperCase() + ', TRUSTEE OF';
-    drawText(grantorLine, margin, y, 11, font, page2);
-    y -= 14;
+    y = drawWrappedText(grantorLine, margin, y, width - (margin * 2), 11, 14, font, page2);
     
     const trustLine = 'THE ' + data.trustName.toUpperCase() + ' DATED ' + trustDateFormatted.toUpperCase() + ', AND ANY AMENDMENTS THERETO';
-    drawText(trustLine, margin, y, 11, font, page2);
-    y -= 18;
+    y = drawWrappedText(trustLine, margin, y, width - (margin * 2), 11, 14, font, page2);
+    y -= 4;
 
     const propertyLine = 'the real property in the CITY OF ' + data.city.toUpperCase() + ' County of ' + data.county.toUpperCase() + ' State of CA, described as:';
     drawText(propertyLine, margin, y, 11, font, page2);
     y -= 18;
 
-    // Legal Description (keep original case as it's a legal description)
+    // Legal Description
     y = drawWrappedText(data.legalDescription, margin, y, width - (margin * 2), 10, 13, font, page2);
     y -= 18;
 
