@@ -131,6 +131,12 @@ function performOCR(base64File, mimeType) {
     body += `--${boundary}\r\n`;
     body += `Content-Disposition: form-data; name="scale"\r\n\r\n`;
     body += `true\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="isTable"\r\n\r\n`;
+    body += `false\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="filetype"\r\n\r\n`;
+    body += `PDF\r\n`;
     body += `--${boundary}--\r\n`;
 
     const options = {
@@ -161,13 +167,28 @@ function performOCR(base64File, mimeType) {
           if (response.IsErroredOnProcessing) {
             const errorMsg = response.ErrorMessage?.[0] || 'OCR processing error';
             console.error('OCR error:', errorMsg);
+            
+            // Check if it's a page limit error
+            if (errorMsg.includes('maximum page limit')) {
+              console.log('Page limit hit - but we got some pages, continuing...');
+              // Try to extract text from what we got
+              if (response.ParsedResults && response.ParsedResults.length > 0) {
+                const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
+                console.log('Extracted text from available pages, length:', text.length);
+                console.log('First 1000 chars:', text.substring(0, 1000));
+                resolve(text);
+                return;
+              }
+            }
+            
             reject(new Error(errorMsg));
             return;
           }
 
           if (response.ParsedResults && response.ParsedResults.length > 0) {
             const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
-            console.log('Text extracted, length:', text.length);
+            console.log('Text extracted successfully, length:', text.length);
+            console.log('First 1000 chars:', text.substring(0, 1000));
             resolve(text);
           } else {
             reject(new Error('No text extracted from document'));
@@ -197,7 +218,7 @@ function performOCR(base64File, mimeType) {
 function parseOCRText(text) {
   // Log for debugging
   console.log('=== PARSING OCR TEXT ===');
-  console.log('First 1000 chars:', text.substring(0, 1000));
+  console.log('Full text length:', text.length);
   
   return {
     apn: extractAPN(text),
