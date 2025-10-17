@@ -220,38 +220,37 @@ exports.handler = async (event, context) => {
     // ==================== PAGE 2: MAIN DEED ====================
     console.log('Creating main deed page...');
     const page2 = pdfDoc.addPage([612, 792]);
-    y = height - 60;
-
+    
     // Calculate box height dynamically based on content
     const boxContentWidth = width - (margin * 2) - 20; // Leave padding inside box
-    let boxContentHeight = 20; // Start with padding
+    let estimatedLines = 0;
     
-    // Measure each line
-    boxContentHeight += 14; // RECORDING REQUESTED BY
-    const trustNameLines = Math.ceil(boldFont.widthOfTextAtSize(data.trustName.toUpperCase(), 11) / boxContentWidth);
-    boxContentHeight += trustNameLines * 14;
-    boxContentHeight += 6; // spacing
-    boxContentHeight += 14; // WHEN RECORDED MAIL TO
-    const trusteeLines = Math.ceil(font.widthOfTextAtSize((data.trustee || data.grantor).toUpperCase(), 11) / boxContentWidth);
-    boxContentHeight += trusteeLines * 14;
+    // Count lines needed
+    estimatedLines += 1; // RECORDING REQUESTED BY
+    estimatedLines += Math.ceil(boldFont.widthOfTextAtSize(data.trustName.toUpperCase(), 11) / boxContentWidth);
+    estimatedLines += 1; // spacing
+    estimatedLines += 1; // WHEN RECORDED MAIL TO
+    estimatedLines += Math.ceil(font.widthOfTextAtSize((data.trustee || data.grantor).toUpperCase(), 11) / boxContentWidth);
     if (data.mailingAddress) {
-      const addressLines = Math.ceil(font.widthOfTextAtSize(data.mailingAddress.toUpperCase(), 11) / boxContentWidth);
-      boxContentHeight += addressLines * 14;
+      estimatedLines += Math.ceil(font.widthOfTextAtSize(data.mailingAddress.toUpperCase(), 11) / boxContentWidth);
     }
-    boxContentHeight += 10; // bottom padding
     
-    // Minimum box height
-    const boxHeight = Math.max(120, boxContentHeight);
+    const boxHeight = Math.max(130, (estimatedLines * 14) + 30); // Minimum 130px
+    const boxTop = height - 60;
+    const boxBottom = boxTop - boxHeight;
 
-    // Draw recording box
+    // Draw recording box FIRST
     page2.drawRectangle({
       x: margin,
-      y: height - 60 - boxHeight,
+      y: boxBottom,
       width: width - (margin * 2),
       height: boxHeight,
       borderColor: rgb(0, 0, 0),
       borderWidth: 1,
     });
+
+    // NOW draw content INSIDE the box, starting from the top
+    y = boxTop - 15; // Start 15px below the top of box
 
     // Content INSIDE the box with wrapping
     drawText('RECORDING REQUESTED BY', margin + 10, y, 11, boldFont, page2);
@@ -269,7 +268,7 @@ exports.handler = async (event, context) => {
     }
 
     // Continue BELOW the box
-    y = height - 60 - boxHeight - 20;
+    y = boxBottom - 20;
 
     // APN
     drawText('APN: ' + data.apn.toUpperCase(), margin, y, 11, font, page2);
