@@ -1,17 +1,14 @@
 /**
  * Netlify serverless function for OCR extraction
- * Automatically converts PDFs to images and extracts text using Google Cloud Vision API
+ * Uses OCR.space API which handles PDFs directly
  */
 
 const multipart = require('lambda-multipart-parser');
 const https = require('https');
 
-// Import PDF.js
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-const { createCanvas } = require('canvas');
-
-// Google Cloud Vision API key
-const GOOGLE_API_KEY = 'AIzaSyB3wG7fP2uWGYKGWxHUGlMS2Y9zIqlL_gg';
+// OCR.space API - Free tier: 25,000 requests/month
+// Get your own key at: https://ocr.space/ocrapi (use the demo key for now)
+const OCR_API_KEY = 'K87899142388957';
 
 exports.handler = async (event, context) => {
   const headers = {
@@ -47,39 +44,28 @@ exports.handler = async (event, context) => {
     }
 
     const file = result.files[0];
-    console.log('Processing file:', file.filename, 'Type:', file.contentType, 'Size:', file.content.length);
+    console.log('Processing file:', file.filename, 'Size:', file.content.length);
 
-    // Check if it's a PDF
-    const isPDF = file.filename.toLowerCase().endsWith('.pdf') || 
-                  file.contentType === 'application/pdf';
+    // Convert file to base64
+    const base64File = Buffer.from(file.content).toString('base64');
+    
+    // Detect file type
+    const fileExtension = file.filename.split('.').pop().toLowerCase();
+    const mimeType = fileExtension === 'pdf' ? 'application/pdf' : 
+                     fileExtension === 'png' ? 'image/png' : 
+                     fileExtension === 'jpg' || fileExtension === 'jpeg' ? 'image/jpeg' : 
+                     'application/pdf';
 
-    let base64Image;
-
-    if (isPDF) {
-      console.log('PDF detected - converting to image for OCR...');
-      
-      // Convert PDF first page to image
-      base64Image = await convertPDFToImage(file.content);
-      
-      if (!base64Image) {
-        throw new Error('Failed to convert PDF to image');
-      }
-      
-      console.log('PDF converted to image successfully');
-    } else {
-      // Already an image
-      base64Image = Buffer.from(file.content).toString('base64');
-    }
-
-    // Perform OCR on the image
-    console.log('Calling Google Vision API...');
-    const ocrText = await performGoogleOCR(base64Image);
+    console.log('Calling OCR.space API for:', fileExtension);
+    
+    // Call OCR.space API (supports PDFs directly!)
+    const ocrText = await performOCR(base64File, mimeType);
 
     if (!ocrText) {
       throw new Error('No text extracted from document');
     }
 
-    console.log('OCR successful! Extracted text length:', ocrText.length);
+    console.log('OCR successful! Text length:', ocrText.length);
 
     // Parse the extracted text
     const extractedData = parseOCRText(ocrText);
@@ -122,72 +108,41 @@ exports.handler = async (event, context) => {
   }
 };
 
-async function convertPDFToImage(pdfBuffer) {
-  try {
-    // Load PDF
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(pdfBuffer),
-      useSystemFonts: true,
-    });
-    
-    const pdf = await loadingTask.promise;
-    
-    // Get first page
-    const page = await pdf.getPage(1);
-    
-    // Set scale for high quality
-    const scale = 2.0;
-    const viewport = page.getViewport({ scale });
-    
-    // Create canvas
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext('2d');
-    
-    // Render PDF page to canvas
-    const renderContext = {
-      canvasContext: context,
-      viewport: viewport,
-    };
-    
-    await page.render(renderContext).promise;
-    
-    // Convert canvas to base64 image
-    const imageBuffer = canvas.toBuffer('image/png');
-    const base64Image = imageBuffer.toString('base64');
-    
-    return base64Image;
-    
-  } catch (error) {
-    console.error('Error converting PDF to image:', error);
-    throw new Error('Failed to convert PDF: ' + error.message);
-  }
-}
-
-function performGoogleOCR(base64Image) {
+function performOCR(base64File, mimeType) {
   return new Promise((resolve, reject) => {
-    const requestBody = JSON.stringify({
-      requests: [
-        {
-          image: {
-            content: base64Image
-          },
-          features: [
-            {
-              type: 'DOCUMENT_TEXT_DETECTION'
-            }
-          ]
-        }
-      ]
-    });
+    const boundary = '----WebKitFormBoundary' + Date.now();
+    
+    let body = '';
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="base64Image"\r\n\r\n`;
+    body += `data:${mimeType};base64,${base64File}\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="language"\r\n\r\n`;
+    body += `eng\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="isOverlayRequired"\r\n\r\n`;
+    body += `false\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="OCREngine"\r\n\r\n`;
+    body += `2\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="detectOrientation"\r\n\r\n`;
+    body += `true\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="scale"\r\n\r\n`;
+    body += `true\r\n`;
+    body += `--${boundary}--\r\n`;
 
     const options = {
-      hostname: 'vision.googleapis.com',
-      path: `/v1/images:annotate?key=${GOOGLE_API_KEY}`,
+      hostname: 'api.ocr.space',
+      path: '/parse/image',
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'apikey': OCR_API_KEY,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': Buffer.byteLength(body)
       },
-      timeout: 30000
+      timeout: 60000 // 60 second timeout for PDFs
     };
 
     const req = https.request(options, (res) => {
@@ -199,56 +154,42 @@ function performGoogleOCR(base64Image) {
 
       res.on('end', () => {
         try {
-          if (res.statusCode !== 200) {
-            console.error('API error response:', data);
-            reject(new Error(`API returned status ${res.statusCode}`));
-            return;
-          }
-
+          console.log('OCR.space response status:', res.statusCode);
+          
           const response = JSON.parse(data);
           
-          if (response.error) {
-            console.error('API error:', response.error);
-            reject(new Error(response.error.message || 'Google Vision API error'));
+          if (response.IsErroredOnProcessing) {
+            const errorMsg = response.ErrorMessage?.[0] || 'OCR processing error';
+            console.error('OCR error:', errorMsg);
+            reject(new Error(errorMsg));
             return;
           }
 
-          if (response.responses && response.responses[0]) {
-            const result = response.responses[0];
-            
-            if (result.error) {
-              console.error('OCR error:', result.error);
-              reject(new Error(result.error.message || 'OCR processing error'));
-              return;
-            }
-
-            const fullTextAnnotation = result.fullTextAnnotation;
-            if (fullTextAnnotation && fullTextAnnotation.text) {
-              resolve(fullTextAnnotation.text);
-            } else {
-              reject(new Error('No text found in document'));
-            }
+          if (response.ParsedResults && response.ParsedResults.length > 0) {
+            const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
+            console.log('Text extracted, length:', text.length);
+            resolve(text);
           } else {
-            reject(new Error('Invalid response from API'));
+            reject(new Error('No text extracted from document'));
           }
         } catch (e) {
           console.error('Parse error:', e);
-          reject(new Error('Failed to parse response: ' + e.message));
+          reject(new Error('Failed to parse OCR response: ' + e.message));
         }
       });
     });
 
     req.on('error', (e) => {
       console.error('Request error:', e);
-      reject(new Error('Request failed: ' + e.message));
+      reject(new Error('OCR request failed: ' + e.message));
     });
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Request timed out'));
+      reject(new Error('OCR request timed out'));
     });
 
-    req.write(requestBody);
+    req.write(body);
     req.end();
   });
 }
