@@ -39,6 +39,11 @@ exports.handler = async (event, context) => {
       }
     }
 
+    // Default vesting if not provided
+    if (!data.vesting) {
+      data.vesting = 'Single Man';
+    }
+
     // Create PDF document
     const pdfDoc = await PDFDocument.create();
     
@@ -66,17 +71,17 @@ exports.handler = async (event, context) => {
     };
 
     // Helper for wrapped text
-    const drawWrappedText = (text, x, startY, maxWidth, size = 11, lineHeight = 14, page = page1) => {
+    const drawWrappedText = (text, x, startY, maxWidth, size = 11, lineHeight = 14, fontType = font, page = page1) => {
       const words = text.split(' ');
       let line = '';
       let y = startY;
 
       for (const word of words) {
         const testLine = line + word + ' ';
-        const testWidth = font.widthOfTextAtSize(testLine, size);
+        const testWidth = fontType.widthOfTextAtSize(testLine, size);
 
         if (testWidth > maxWidth && line !== '') {
-          drawText(line.trim(), x, y, size, font, page);
+          drawText(line.trim(), x, y, size, fontType, page);
           line = word + ' ';
           y -= lineHeight;
         } else {
@@ -85,7 +90,7 @@ exports.handler = async (event, context) => {
       }
 
       if (line.trim() !== '') {
-        drawText(line.trim(), x, y, size, font, page);
+        drawText(line.trim(), x, y, size, fontType, page);
         y -= lineHeight;
       }
 
@@ -154,14 +159,17 @@ exports.handler = async (event, context) => {
     drawText('[X] This conveyance transfers the Grantors interest into his or her revocable trust, R&T 11930.', margin, y, 10);
     y -= 25;
 
-    // Main granting clause
-    const grantorText = `GRANTOR(S) ${data.grantor}, hereby GRANT(s) to ${data.trustee}, TRUSTEE OF THE ${data.trustName} DATED ${data.trustDate}, AND ANY AMENDMENTS THERETO the real property in the CITY OF ${data.city.toUpperCase()} County of ${data.county} State of CA, described as:`;
+    // Format vesting text (convert to lowercase except first letters)
+    const vestingLower = data.vesting.toLowerCase();
+
+    // Main granting clause with vesting
+    const grantorText = `GRANTOR(S) ${data.grantor}, ${vestingLower}, hereby GRANT(s) to ${data.trustee}, TRUSTEE OF THE ${data.trustName.toUpperCase()} DATED ${formatDate(data.trustDate)}, AND ANY AMENDMENTS THERETO the real property in the CITY OF ${data.city.toUpperCase()} County of ${data.county} State of CA, described as:`;
     
-    y = drawWrappedText(grantorText, margin, y, contentWidth, 11, 14);
+    y = drawWrappedText(grantorText, margin, y, contentWidth, 11, 14, font);
     y -= 10;
 
     // Legal Description
-    y = drawWrappedText(data.legalDescription, margin, y, contentWidth, 10, 13);
+    y = drawWrappedText(data.legalDescription, margin, y, contentWidth, 10, 13, font);
     y -= 15;
 
     // Commonly known as
@@ -214,7 +222,7 @@ exports.handler = async (event, context) => {
     // Notary text
     const notaryText = `On ________________, before me, ___________________________________, a Notary Public, personally appeared ____________________________________________, who proved to me on the basis of satisfactory evidence to be the person whose name is subscribed to the within instrument acknowledged to me that he/she/they executed the same in his/her/their authorized capacity, and that by his/her/their signature on the instrument the person, or the entity upon behalf of which the person acted, executed the instrument.`;
     
-    y = drawWrappedText(notaryText, margin, y, contentWidth, 10, 13, page2);
+    y = drawWrappedText(notaryText, margin, y, contentWidth, 10, 13, font, page2);
     y -= 20;
 
     drawText('I certify under PENALTY OF PERJURY under the laws of the State of California that the', margin, y, 10, font, page2);
@@ -244,7 +252,7 @@ exports.handler = async (event, context) => {
     });
 
     const disclaimerText = 'A notary public or other officer completing this certificate verifies only the identity of the individual who signed the document to which this certificate is attached, and not the truthfulness, accuracy, or validity of that document.';
-    drawWrappedText(disclaimerText, margin + 10, disclaimerY + 35, contentWidth - 20, 9, 11, page2);
+    drawWrappedText(disclaimerText, margin + 10, disclaimerY + 35, contentWidth - 20, 9, 11, font, page2);
 
     // Serialize PDF
     const pdfBytes = await pdfDoc.save();
@@ -268,7 +276,34 @@ exports.handler = async (event, context) => {
       body: JSON.stringify({
         error: 'Failed to generate deed',
         message: error.message,
+        stack: error.stack,
       }),
     };
   }
 };
+
+// Helper function to format date
+function formatDate(dateString) {
+  if (!dateString) return '';
+  
+  const date = new Date(dateString);
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+  
+  return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+```
+
+**Key changes:**
+1. ✅ **Added vesting parameter** - Now accepts and uses the vesting field
+2. ✅ **Fixed drawWrappedText function** - Added `fontType` parameter that was missing
+3. ✅ **Formatted vesting text** - Converts to lowercase for proper legal format (e.g., "a married man as his sole and separate property")
+4. ✅ **Better date formatting** - Added `formatDate()` helper function
+5. ✅ **Better error handling** - Returns stack trace for debugging
+6. ✅ **Default vesting** - Falls back to "Single Man" if not provided
+
+**The granting clause now looks like:**
+```
+GRANTOR(S) Arthur Avagyants, a married man as his sole and separate property, 
+hereby GRANT(s) to Arthur Avagyants, TRUSTEE OF THE ARTHUR AVAGYANTS LIVING TRUST 
+DATED January 15, 2024...
