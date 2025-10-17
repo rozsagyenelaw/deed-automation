@@ -5,6 +5,7 @@
   "main": "index.js",
   "dependencies": {
     "pdf-lib": "^1.17.1",
-    "lambda-multipart-parser": "^1.0.1"
+    "lambda-multipart-parser": "^1.0.1",
+    "tesseract.js": "^4.1.1"
   }
 }
