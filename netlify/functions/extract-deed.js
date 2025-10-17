@@ -66,7 +66,6 @@ exports.handler = async (event, context) => {
     }
 
     console.log('OCR successful! Text length:', ocrText.length);
-    console.log('First 500 chars of OCR text:', ocrText.substring(0, 500));
 
     // Parse the extracted text
     const extractedData = parseOCRText(ocrText);
@@ -143,7 +142,7 @@ function performOCR(base64File, mimeType) {
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': Buffer.byteLength(body)
       },
-      timeout: 60000 // 60 second timeout for PDFs
+      timeout: 60000
     };
 
     const req = https.request(options, (res) => {
@@ -196,6 +195,10 @@ function performOCR(base64File, mimeType) {
 }
 
 function parseOCRText(text) {
+  // Log for debugging
+  console.log('=== PARSING OCR TEXT ===');
+  console.log('First 1000 chars:', text.substring(0, 1000));
+  
   return {
     apn: extractAPN(text),
     grantor: extractGrantor(text),
@@ -212,63 +215,89 @@ function parseOCRText(text) {
 
 function extractAPN(text) {
   const patterns = [
-    /APN[:\s#]*([0-9\-]+)/i,
-    /Assessor'?s?\s+Parcel\s+Number[:\s]*([0-9\-]+)/i,
-    /A\.P\.N\.[:\s]*([0-9\-]+)/i,
+    // Standard APN format: 1234-567-890
+    /APN[:\s#]*([0-9]{4}[-\s]?[0-9]{3}[-\s]?[0-9]{3})/i,
+    /Assessor['\s]?s?\s+Parcel\s+(?:Number|No\.?)[:\s]*([0-9\-\s]+)/i,
+    /Parcel\s*(?:No\.?|Number|#)[:\s]*([0-9\-\s]+)/i,
+    /A\.?\s*P\.?\s*N\.?[:\s]*([0-9\-\s]+)/i,
+    // Flexible: any sequence of 8-12 digits with hyphens
+    /\b([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})\b/,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      console.log('Found APN:', match[1]);
-      return match[1].trim();
+      let apn = match[1].trim();
+      // Clean and format
+      apn = apn.replace(/\s+/g, '').replace(/[^0-9\-]/g, '');
+      // Ensure proper format
+      if (apn.length >= 10) {
+        console.log('Found APN:', apn);
+        return apn;
+      }
     }
   }
   return '';
 }
 
 function extractGrantor(text) {
-  // IMPORTANT: In the ORIGINAL deed, we extract the GRANTEE
-  // The GRANTEE from the original deed becomes the GRANTOR in the trust transfer deed
-  // Format in original deed: "GRANTEE: John Doe, a married man"
+  // Extract GRANTEE from original deed (becomes grantor in trust transfer)
   const patterns = [
-    /GRANTEE[:\s]+([^,\n]+(?:,\s*[^,\n]+)?),?\s*(?:a|an|the)/i,
-    /(?:TO|CONVEYS?\s+TO)[:\s]+([^,\n]+),?\s*(?:a|an)/i,
-    /hereby\s+(?:grant|grants|convey|conveys)\s+to\s+([^,]+),/i,
+    // "GRANTEE: Arthur Avagyants"
+    /GRANTEE[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:,|\s+a|\s+an|\s*$)/i,
+    
+    // "conveys to Arthur Avagyants, a married"
+    /(?:conveys?|grants?|transfers?)\s+to\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:,\s*(?:a|an))/i,
+    
+    // "Arthur Avagyants, a married man"
+    /\b([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:a|an)\s+(?:married|single|unmarried|widowed)/i,
+    
+    // From mailing address
+    /(?:Mail|Return|Send)[^\n]*?(?:to|at)[:\s]*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let grantee = match[1].trim();
-      console.log('Found GRANTEE (will be grantor in trust deed):', grantee);
-      return grantee;
+      let name = match[1].trim();
+      // Clean up
+      name = name.replace(/,.*$/, '').trim();
+      // Validate it's a real name (2-4 words, proper case)
+      if (name.split(/\s+/).length >= 2 && name.split(/\s+/).length <= 4) {
+        console.log('Found GRANTEE (becomes grantor):', name);
+        return name;
+      }
     }
   }
+  
   return '';
 }
 
 function extractTrustee(text) {
-  // Trustee will usually be the same as the grantee/grantor
-  // User can modify in the form
   const grantor = extractGrantor(text);
-  return grantor.split(',')[0].trim();
+  return grantor;
 }
 
 function extractTrustName(text) {
-  // Trust name must be entered by user - not in original deed
   return '';
 }
 
 function extractTrustDate(text) {
-  // Trust date must be entered by user - not in original deed
   return '';
 }
 
 function extractPropertyAddress(text) {
   const patterns = [
-    /(?:situated|located)\s+(?:in|at)[^\n]*?([0-9]+[^\n]+?(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir)[^\n]*?)(?:,|\.|\n)/i,
-    /(?:Property|Real\s+Property)\s+(?:Address|Located)[:\s]*([^\n]+)/i,
-    /commonly\s+known\s+as[:\s]*([^\n]+)/i,
+    // "6821 Saint Estaban Street"
+    /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?)\b/i,
+    
+    // "commonly known as: 123 Main St"
+    /(?:commonly\s+known\s+as|located\s+at|situated\s+at)[:\s]*([0-9]+[^\n,]+?(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?)/i,
+    
+    // "property at 123 Main Street"
+    /property\s+at\s+([0-9]+[^\n,]+)/i,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
@@ -276,35 +305,51 @@ function extractPropertyAddress(text) {
       // Clean up
       address = address.replace(/[,.]$/, '').trim();
       // Remove city/state if included
-      address = address.replace(/,?\s*(?:Los Angeles|Ventura|Riverside|San Bernardino|Orange),?\s*(?:CA|California).*/i, '').trim();
-      console.log('Found Property Address:', address);
-      return address;
+      address = address.replace(/,?\s*(?:Los Angeles|Ventura|Riverside|San Bernardino|Orange).*$/i, '').trim();
+      
+      if (address.length > 10) {
+        console.log('Found Property Address:', address);
+        return address;
+      }
     }
   }
+  
   return '';
 }
 
 function extractCity(text) {
   const patterns = [
-    /(?:City|County)\s+of\s+([A-Z][a-z\s]+?)(?:,|\s+County|\s+State)/i,
-    /,\s*([A-Z][a-z\s]+),\s*(?:CA|California)/i,
+    // "City of Los Angeles"
+    /City\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    
+    // ", Los Angeles, CA"
+    /,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:CA|California)/i,
+    
+    // Look for known cities
+    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica)/i,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
       const city = match[1].trim();
-      console.log('Found City:', city);
-      return city;
+      // Validate it's not garbage
+      if (city.length >= 3 && city.length <= 30 && !/[0-9]/.test(city)) {
+        console.log('Found City:', city);
+        return city;
+      }
     }
   }
+  
   return '';
 }
 
 function extractCounty(text) {
   const patterns = [
     /County\s+of\s+(Los Angeles|Ventura|Riverside|San Bernardino|Orange)/i,
-    /(?:in|of)\s+(Los Angeles|Ventura|Riverside|San Bernardino|Orange)\s+County/i,
+    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange)\s+County/i,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
@@ -312,29 +357,36 @@ function extractCounty(text) {
       return match[1].trim();
     }
   }
+  
   return 'Los Angeles';
 }
 
 function extractLegalDescription(text) {
-  // Legal descriptions are typically between "described as" and "APN" or address
+  // Legal descriptions typically start with "Lot", "Parcel", or "described as"
   const startPatterns = [
     /(?:legally\s+)?described\s+as\s+follows?[:\s]*/i,
     /(?:real\s+property|land)\s+described\s+as[:\s]*/i,
     /LEGAL\s+DESCRIPTION[:\s]*/i,
+    /\b(Lot\s+[0-9]+)/i,
+    /\b(Parcel\s+[0-9]+)/i,
   ];
   
   const endPatterns = [
-    /(?:APN|Assessor'?s?\s+Parcel)/i,
+    /(?:APN|Assessor)/i,
     /(?:commonly\s+known|also\s+known|street\s+address)/i,
-    /(?:EXCEPTING|Subject\s+to)/i,
+    /(?:situate|located|lying)\s+in/i,
   ];
 
   let startIndex = -1;
+  let bestMatch = null;
+  
   for (const pattern of startPatterns) {
     const match = text.match(pattern);
     if (match) {
-      startIndex = match.index + match[0].length;
-      break;
+      if (startIndex === -1 || match.index < startIndex) {
+        startIndex = match.index + match[0].length;
+        bestMatch = match[0];
+      }
     }
   }
 
@@ -343,17 +395,16 @@ function extractLegalDescription(text) {
   let endIndex = text.length;
   for (const pattern of endPatterns) {
     const match = text.substring(startIndex).match(pattern);
-    if (match) {
+    if (match && match.index < (endIndex - startIndex)) {
       endIndex = startIndex + match.index;
-      break;
     }
   }
 
   const legalDesc = text.substring(startIndex, endIndex).trim();
-  // Clean up whitespace
   const cleaned = legalDesc.replace(/\s+/g, ' ').trim();
   
-  if (cleaned.length > 20) {
+  // Only return if it looks like a real legal description
+  if (cleaned.length > 30 && cleaned.length < 1000) {
     console.log('Found Legal Description, length:', cleaned.length);
     return cleaned;
   }
@@ -362,22 +413,33 @@ function extractLegalDescription(text) {
 }
 
 function extractMailingAddress(text) {
-  // Mailing address patterns
   const patterns = [
-    /(?:Mail|Send|Return)\s+(?:to|documents to|tax statements to)[:\s]*([^\n]+(?:\n[^\n]+){0,2})/i,
-    /MAIL\s+TAX[^\n]*?TO[:\s]*([^\n]+)/i,
+    // "Mail to: Arthur Avagyants, 6821 Saint Estaban Street"
+    /(?:Mail|Send|Return)\s+(?:to|at)[:\s]*([A-Z][a-z]+\s+[A-Z][a-z]+[^\n]*?[0-9]+[^\n]+)/i,
+    
+    // "Arthur Avagyants\n6821 Saint Estaban Street"
+    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*[\n,]\s*([0-9]+[^\n]+)/i,
   ];
+  
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let address = match[1].trim();
-      const lines = address.split('\n').slice(0, 2);
-      const cleaned = lines.join(', ').replace(/\s+/g, ' ').trim();
-      console.log('Found Mailing Address:', cleaned);
-      return cleaned;
+      let address = match[0].replace(/(?:Mail|Send|Return)\s+(?:to|at)[:\s]*/i, '').trim();
+      address = address.replace(/\s+/g, ' ').trim();
+      
+      if (address.length > 10) {
+        console.log('Found Mailing Address:', address);
+        return address;
+      }
     }
   }
   
-  // If no specific mailing address, use property address
-  return extractPropertyAddress(text);
+  // Fallback: combine name + property address
+  const name = extractGrantor(text);
+  const propAddress = extractPropertyAddress(text);
+  if (name && propAddress) {
+    return `${name}, ${propAddress}`;
+  }
+  
+  return '';
 }
