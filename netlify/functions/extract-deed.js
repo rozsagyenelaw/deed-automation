@@ -220,7 +220,7 @@ function parseOCRText(text) {
   console.log('=== PARSING OCR TEXT ===');
   console.log('Full text length:', text.length);
   
-  return {
+  const data = {
     apn: extractAPN(text),
     grantor: extractGrantor(text),
     trustee: extractTrustee(text),
@@ -230,8 +230,13 @@ function parseOCRText(text) {
     city: extractCity(text),
     county: extractCounty(text),
     legalDescription: extractLegalDescription(text),
-    mailingAddress: extractMailingAddress(text),
+    mailingAddress: '',
   };
+  
+  // Set mailing address to property address
+  data.mailingAddress = data.propertyAddress;
+  
+  return data;
 }
 
 function extractAPN(text) {
@@ -383,84 +388,58 @@ function extractCounty(text) {
 }
 
 function extractLegalDescription(text) {
-  // Legal descriptions typically start with "Lot", "Parcel", or "described as"
-  const startPatterns = [
-    /(?:legally\s+)?described\s+as\s+follows?[:\s]*/i,
-    /(?:real\s+property|land)\s+described\s+as[:\s]*/i,
-    /LEGAL\s+DESCRIPTION[:\s]*/i,
-    /\b(Lot\s+[0-9]+)/i,
-    /\b(Parcel\s+[0-9]+)/i,
-  ];
+  // Legal descriptions have many formats. Let's try multiple approaches.
   
-  const endPatterns = [
-    /(?:APN|Assessor)/i,
-    /(?:commonly\s+known|also\s+known|street\s+address)/i,
-    /(?:situate|located|lying)\s+in/i,
-  ];
-
-  let startIndex = -1;
-  let bestMatch = null;
+  // Pattern 1: Look for "Lot X" followed by description
+  const lotPattern = /\b(Lot\s+[0-9]+[^\.]*?(?:Map|Tract|Book|Page)[^\n]{20,500})/i;
+  let match = text.match(lotPattern);
+  if (match) {
+    const desc = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found Legal Description (Lot pattern):', desc.substring(0, 100));
+    return desc;
+  }
   
-  for (const pattern of startPatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      if (startIndex === -1 || match.index < startIndex) {
-        startIndex = match.index + match[0].length;
-        bestMatch = match[0];
-      }
+  // Pattern 2: Look for "described as" followed by text
+  const describedPattern = /(?:legally\s+)?described\s+as\s+follows?[:\s]*([^\.]+(?:\.[^\.]+){0,3})/i;
+  match = text.match(describedPattern);
+  if (match) {
+    let desc = match[1].trim();
+    // Stop at common endpoints
+    desc = desc.replace(/(?:APN|Assessor|commonly\s+known|situate).*/i, '').trim();
+    desc = desc.replace(/\s+/g, ' ');
+    if (desc.length > 30) {
+      console.log('Found Legal Description (described as):', desc.substring(0, 100));
+      return desc;
     }
   }
-
-  if (startIndex === -1) return '';
-
-  let endIndex = text.length;
-  for (const pattern of endPatterns) {
-    const match = text.substring(startIndex).match(pattern);
-    if (match && match.index < (endIndex - startIndex)) {
-      endIndex = startIndex + match.index;
+  
+  // Pattern 3: Look for parcel/lot numbers with map references
+  const parcelPattern = /\b((?:Parcel|Lot)\s+[0-9]+[^\.]*?(?:Map|Tract|recorded|filed)[^\n]{20,500})/i;
+  match = text.match(parcelPattern);
+  if (match) {
+    const desc = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found Legal Description (Parcel pattern):', desc.substring(0, 100));
+    return desc;
+  }
+  
+  // Pattern 4: Look for legal description section markers
+  const sectionPattern = /LEGAL\s+DESCRIPTION[:\s]*([^\n]+(?:\n[^\n]+){0,10})/i;
+  match = text.match(sectionPattern);
+  if (match) {
+    let desc = match[1].trim();
+    desc = desc.replace(/(?:APN|Assessor|commonly\s+known).*/i, '').trim();
+    desc = desc.replace(/\s+/g, ' ');
+    if (desc.length > 30) {
+      console.log('Found Legal Description (section marker):', desc.substring(0, 100));
+      return desc;
     }
   }
-
-  const legalDesc = text.substring(startIndex, endIndex).trim();
-  const cleaned = legalDesc.replace(/\s+/g, ' ').trim();
   
-  // Only return if it looks like a real legal description
-  if (cleaned.length > 30 && cleaned.length < 1000) {
-    console.log('Found Legal Description, length:', cleaned.length);
-    return cleaned;
-  }
-  
+  console.log('No legal description found');
   return '';
 }
 
 function extractMailingAddress(text) {
-  const patterns = [
-    // "Mail to: Arthur Avagyants, 6821 Saint Estaban Street"
-    /(?:Mail|Send|Return)\s+(?:to|at)[:\s]*([A-Z][a-z]+\s+[A-Z][a-z]+[^\n]*?[0-9]+[^\n]+)/i,
-    
-    // "Arthur Avagyants\n6821 Saint Estaban Street"
-    /([A-Z][a-z]+\s+[A-Z][a-z]+)\s*[\n,]\s*([0-9]+[^\n]+)/i,
-  ];
-  
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      let address = match[0].replace(/(?:Mail|Send|Return)\s+(?:to|at)[:\s]*/i, '').trim();
-      address = address.replace(/\s+/g, ' ').trim();
-      
-      if (address.length > 10) {
-        console.log('Found Mailing Address:', address);
-        return address;
-      }
-    }
-  }
-  
-  // Fallback: combine name + property address
-  const name = extractGrantor(text);
-  const propAddress = extractPropertyAddress(text);
-  if (name && propAddress) {
-    return `${name}, ${propAddress}`;
-  }
-  
+  // Not used - we just use property address
   return '';
 }
