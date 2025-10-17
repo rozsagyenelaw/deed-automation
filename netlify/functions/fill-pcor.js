@@ -8,10 +8,10 @@ const path = require('path');
 
 // County to file mapping
 const COUNTY_FILES = {
-  'los-angeles': 'samples/pcors/la-county-pcor.pdf',
+  'los angeles': 'samples/pcors/la-county-pcor.pdf',
   'ventura': 'samples/pcors/ventura-pcor.pdf',
   'riverside': 'samples/pcors/riverside-pcor.pdf',
-  'san-bernardino': 'samples/pcors/san-bernardino-pcor.pdf',
+  'san bernardino': 'samples/pcors/san-bernardino-pcor.pdf',
   'orange': 'samples/pcors/orange-county-pcor.pdf',
 };
 
@@ -35,134 +35,230 @@ exports.handler = async (event, context) => {
   }
 
   try {
+    console.log('=== FILL PCOR FUNCTION CALLED ===');
+    
     const data = JSON.parse(event.body);
+    console.log('Parsed data:', JSON.stringify(data, null, 2));
 
     // Validate required fields
-    if (!data.county || !data.apn || !data.address || !data.grantor || !data.trustName) {
+    const required = ['county', 'apn', 'propertyAddress', 'grantor', 'trustName'];
+    const missing = [];
+    
+    for (const field of required) {
+      if (!data[field] || data[field].trim() === '') {
+        missing.push(field);
+      }
+    }
+
+    if (missing.length > 0) {
+      console.error('Missing fields:', missing);
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Missing required fields' }),
+        body: JSON.stringify({ 
+          error: `Missing required fields: ${missing.join(', ')}`,
+          missingFields: missing 
+        }),
       };
     }
 
     // Get the appropriate PCOR form file
-    const countyKey = data.county.toLowerCase().replace(/\s+/g, '-');
+    const countyKey = data.county.toLowerCase().trim();
+    console.log('Looking for county:', countyKey);
+    console.log('Available counties:', Object.keys(COUNTY_FILES));
+    
     const pcrFormPath = COUNTY_FILES[countyKey];
 
     if (!pcrFormPath) {
+      console.error('County not found:', countyKey);
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Invalid county selected' }),
+        body: JSON.stringify({ 
+          error: `Invalid county selected: ${data.county}`,
+          availableCounties: Object.keys(COUNTY_FILES)
+        }),
       };
     }
 
-    // Read the PCOR form
-    const formPath = path.join(process.cwd(), pcrFormPath);
-    const existingPdfBytes = await fs.readFile(formPath);
+    console.log('Using PCOR form:', pcrFormPath);
+
+    // Read the PCOR form - try multiple path resolutions
+    let existingPdfBytes;
+    let formPath;
+    
+    // Try different path resolutions for Netlify environment
+    const pathsToTry = [
+      path.join(process.cwd(), pcrFormPath),
+      path.join('/var/task', pcrFormPath),
+      path.join(__dirname, '..', '..', pcrFormPath),
+      pcrFormPath
+    ];
+
+    for (const tryPath of pathsToTry) {
+      try {
+        console.log('Trying path:', tryPath);
+        existingPdfBytes = await fs.readFile(tryPath);
+        formPath = tryPath;
+        console.log('Successfully read PDF from:', tryPath);
+        break;
+      } catch (e) {
+        console.log('Path failed:', tryPath, e.message);
+      }
+    }
+
+    if (!existingPdfBytes) {
+      console.error('Could not find PDF file at any path');
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ 
+          error: 'PCOR form file not found',
+          paths: pathsToTry,
+          message: 'The PCOR template PDF file could not be located on the server.'
+        }),
+      };
+    }
+
+    console.log('PDF file size:', existingPdfBytes.length);
 
     // Load the PDF
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
+    console.log('PDF loaded successfully');
+    
     const form = pdfDoc.getForm();
+    console.log('Form extracted');
 
-    // Get all field names (for debugging/mapping)
+    // Get all field names for debugging
     const fields = form.getFields();
-    const fieldNames = fields.map(field => field.getName());
+    const fieldNames = fields.map(field => ({
+      name: field.getName(),
+      type: field.constructor.name
+    }));
+    
+    console.log('Available fields:', JSON.stringify(fieldNames, null, 2));
 
-    // Common field mappings (these may vary by county)
-    // You'll need to inspect each PDF to get exact field names
-    const fieldMappings = {
-      'APN': data.apn,
-      'Assessor Parcel Number': data.apn,
-      'AssessorParcelNumber': data.apn,
-      'Property Address': data.address,
-      'PropertyAddress': data.address,
-      'Street Address': data.address,
-      'Seller/Transferor': data.grantor,
-      'SellerTransferor': data.grantor,
-      'Buyer/Transferee': data.trustName,
-      'BuyerTransferee': data.trustName,
-      'Date': new Date().toLocaleDateString(),
-      'TransferDate': new Date().toLocaleDateString(),
-    };
+    // Prepare today's date
+    const today = new Date();
+    const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`;
 
-    // Try to fill in the form fields
+    // Try to fill in the form fields with multiple possible field names
+    const fieldMappings = [
+      // APN variations
+      { names: ['APN', 'Assessor Parcel Number', 'AssessorParcelNumber', 'Parcel Number', 'ParcelNumber', 'apn'], value: data.apn },
+      
+      // Address variations
+      { names: ['Property Address', 'PropertyAddress', 'Street Address', 'StreetAddress', 'Address', 'address'], value: data.propertyAddress },
+      
+      // Seller/Grantor variations
+      { names: ['Seller/Transferor', 'SellerTransferor', 'Seller', 'Transferor', 'Grantor', 'seller', 'grantor'], value: data.grantor },
+      
+      // Buyer/Trust variations
+      { names: ['Buyer/Transferee', 'BuyerTransferee', 'Buyer', 'Transferee', 'Trust Name', 'TrustName', 'buyer'], value: data.trustName },
+      
+      // Trustee variations
+      { names: ['Trustee', 'Trustee Name', 'TrusteeName', 'trustee'], value: data.trustee || data.grantor },
+      
+      // Date variations
+      { names: ['Date', 'Transfer Date', 'TransferDate', 'Date of Transfer', 'DateOfTransfer', 'date'], value: dateStr },
+      
+      // City
+      { names: ['City', 'city'], value: data.city },
+      
+      // County
+      { names: ['County', 'county'], value: data.county },
+    ];
+
     let filledFields = 0;
-    for (const [fieldName, value] of Object.entries(fieldMappings)) {
-      try {
-        const field = form.getTextField(fieldName);
-        if (field) {
-          field.setText(String(value));
-          filledFields++;
-        }
-      } catch (e) {
-        // Field might not exist or might be a different type
-        console.log(`Could not fill field: ${fieldName}`);
-      }
-    }
-
-    // Try to check the appropriate box for trust transfer (L.1)
-    try {
-      // Common checkbox names for trust transfers
-      const trustCheckboxNames = [
-        'L1', 'L.1', 'L_1', 'TrustTransfer', 'RevocableTrust',
-        'Change in Ownership - Exempt - Transfer to revocable trust'
-      ];
-
-      for (const checkboxName of trustCheckboxNames) {
+    
+    for (const mapping of fieldMappings) {
+      let filled = false;
+      for (const fieldName of mapping.names) {
         try {
-          const checkbox = form.getCheckBox(checkboxName);
-          if (checkbox) {
-            checkbox.check();
+          const field = form.getTextField(fieldName);
+          if (field) {
+            field.setText(String(mapping.value || ''));
+            console.log(`Filled field: ${fieldName} = ${mapping.value}`);
             filledFields++;
+            filled = true;
             break;
           }
         } catch (e) {
-          // Continue trying other names
+          // Field doesn't exist or wrong type, continue
         }
       }
-    } catch (e) {
-      console.log('Could not check trust transfer checkbox');
+      
+      if (!filled && mapping.value) {
+        console.log(`Could not fill value "${mapping.value}" - no matching field found`);
+      }
     }
 
-    // If no fields were filled, the form might not have editable fields
-    // In that case, we'll overlay text on the PDF
-    if (filledFields === 0) {
-      console.log('No form fields found, will overlay text instead');
-      // You could implement PDF overlay logic here if needed
+    console.log(`Filled ${filledFields} fields`);
+
+    // Try to check the trust transfer checkbox (L.1)
+    const trustCheckboxNames = [
+      'L1', 'L.1', 'L_1', 'L 1',
+      'TrustTransfer', 'RevocableTrust', 
+      'Trust Transfer', 'Revocable Trust',
+      'Change in Ownership - Exempt - Transfer to revocable trust',
+      'trust_transfer', 'revocable_trust',
+      'exclusion_trust', 'exclusion_l1'
+    ];
+
+    let checkboxFound = false;
+    for (const checkboxName of trustCheckboxNames) {
+      try {
+        const checkbox = form.getCheckBox(checkboxName);
+        if (checkbox) {
+          checkbox.check();
+          console.log(`Checked checkbox: ${checkboxName}`);
+          filledFields++;
+          checkboxFound = true;
+          break;
+        }
+      } catch (e) {
+        // Not a checkbox or doesn't exist
+      }
     }
 
-    // Flatten the form (make it non-editable)
+    if (!checkboxFound) {
+      console.log('No trust transfer checkbox found');
+    }
+
+    console.log(`Total fields filled: ${filledFields}`);
+
+    // Flatten the form to make it non-editable
     form.flatten();
+    console.log('Form flattened');
 
     // Save the filled PDF
     const pdfBytes = await pdfDoc.save();
+    console.log('PDF saved, size:', pdfBytes.length);
+    
     const base64Pdf = Buffer.from(pdfBytes).toString('base64');
 
     return {
       statusCode: 200,
       headers: {
         ...headers,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/pdf',
       },
-      body: JSON.stringify({
-        success: true,
-        pdf: base64Pdf,
-        filename: `PCOR_${data.county}_${data.apn.replace(/[^0-9]/g, '')}.pdf`,
-        filledFields,
-        availableFields: fieldNames,
-      }),
+      body: base64Pdf,
+      isBase64Encoded: true,
     };
 
   } catch (error) {
-    console.error('Error filling PCOR form:', error);
+    console.error('=== ERROR FILLING PCOR ===');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+    
     return {
       statusCode: 500,
       headers,
       body: JSON.stringify({
         error: 'Failed to fill PCOR form',
         message: error.message,
+        stack: error.stack,
       }),
     };
   }
