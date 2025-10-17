@@ -136,18 +136,18 @@ exports.handler = async (event, context) => {
     drawText(headerText2, (width - font.widthOfTextAtSize(headerText2, 10)) / 2, y, 10, font, coverPage);
     y -= 30;
 
-    // Recording requested by section
+    // Recording requested by section (LEFT SIDE ONLY - before vertical line)
     drawText('RECORDING REQUESTED BY', margin, y, 11, boldFont, coverPage);
     y -= 14;
-    drawText(data.trustName, margin, y, 11, font, coverPage);
+    drawText(data.trustName.toUpperCase(), margin, y, 11, font, coverPage);
     y -= 20;
 
     drawText('WHEN RECORDED MAIL TO', margin, y, 11, boldFont, coverPage);
     y -= 14;
-    drawText(data.trustee || data.grantor, margin, y, 11, font, coverPage);
+    drawText((data.trustee || data.grantor).toUpperCase(), margin, y, 11, font, coverPage);
     y -= 14;
     if (data.mailingAddress) {
-      drawText(data.mailingAddress, margin, y, 11, font, coverPage);
+      drawText(data.mailingAddress.toUpperCase(), margin, y, 11, font, coverPage);
     }
     y -= 30;
 
@@ -158,17 +158,19 @@ exports.handler = async (event, context) => {
       thickness: 1,
       color: rgb(0, 0, 0),
     });
+    
+    const lineY = y; // Save this Y position for vertical line
     y -= 20;
 
-    // Draw vertical line
+    // Draw vertical line (should NOT cut through text)
     coverPage.drawLine({
       start: { x: width / 2, y: height - 50 },
-      end: { x: width / 2, y: y + 20 },
+      end: { x: width / 2, y: lineY },
       thickness: 1,
       color: rgb(0, 0, 0),
     });
 
-    // Space above for recorder's use
+    // Space above for recorder's use (RIGHT SIDE of vertical line)
     const recorderText = "SPACE ABOVE FOR RECORDER'S USE ONLY";
     drawText(recorderText, width - margin - font.widthOfTextAtSize(recorderText, 11), y, 11, font, coverPage);
     y -= 40;
@@ -178,13 +180,13 @@ exports.handler = async (event, context) => {
     drawText(title, (width - boldFont.widthOfTextAtSize(title, 14)) / 2, y, 14, boldFont, coverPage);
     y -= 40;
 
-    // Senate Bill 2 text
+    // Senate Bill 2 text (wrap within margins)
     const sb2Text = 'Pursuant to Senate Bill 2 - Building Homes and Jobs Act (GC Code Section 27388.1), effective January 1, 2018, a fee of seventy-five dollars ($75.00) shall be paid at the time of recording of every real estate instrument, paper, or notice required or permitted by law to be recorded, except those expressly exempted from payment of recording fees, per each single transaction per parcel of real property. The fee imposed by this section shall not exceed two hundred twenty-five dollars ($225.00).';
     
     y = drawWrappedText(sb2Text, margin, y, width - (margin * 2), 10, 13, font, coverPage);
     y -= 20;
 
-    // Checkboxes (using ASCII characters only!)
+    // Checkboxes
     drawText('[ ] Exempt from fee per GC 27388.1 (a) (2); recorded concurrently "in connection with" a transfer', margin, y, 9, font, coverPage);
     y -= 11;
     drawText('     subject to the imposition of documentary transfer tax (DTT).', margin, y, 9, font, coverPage);
@@ -213,33 +215,36 @@ exports.handler = async (event, context) => {
     const page2 = pdfDoc.addPage([612, 792]);
     y = height - 60;
 
-    // Recording box
+    // Recording box - LARGER to fit all content
+    const boxHeight = 110;
     page2.drawRectangle({
       x: margin,
-      y: height - 140,
+      y: height - 60 - boxHeight,
       width: width - (margin * 2),
-      height: 80,
+      height: boxHeight,
       borderColor: rgb(0, 0, 0),
       borderWidth: 1,
     });
 
+    // Content INSIDE the box
     drawText('RECORDING REQUESTED BY', margin + 10, y, 11, boldFont, page2);
     y -= 14;
-    drawText(data.trustName, margin + 10, y, 11, font, page2);
+    drawText(data.trustName.toUpperCase(), margin + 10, y, 11, font, page2);
     y -= 20;
     
     drawText('WHEN RECORDED MAIL TO', margin + 10, y, 11, boldFont, page2);
     y -= 14;
-    drawText(data.trustee || data.grantor, margin + 10, y, 11, font, page2);
+    drawText((data.trustee || data.grantor).toUpperCase(), margin + 10, y, 11, font, page2);
     y -= 14;
     if (data.mailingAddress) {
-      drawText(data.mailingAddress, margin + 10, y, 11, font, page2);
+      drawText(data.mailingAddress.toUpperCase(), margin + 10, y, 11, font, page2);
     }
 
-    y = height - 150;
+    // Continue BELOW the box
+    y = height - 60 - boxHeight - 20;
 
     // APN
-    drawText('APN: ' + data.apn, margin, y, 11, font, page2);
+    drawText('APN: ' + data.apn.toUpperCase(), margin, y, 11, font, page2);
     drawText('Escrow No. ______________', margin + 250, y, 11, font, page2);
     y -= 30;
 
@@ -278,21 +283,21 @@ exports.handler = async (event, context) => {
     // Format trust date
     const trustDateFormatted = formatTrustDate(data.trustDate);
 
-    // Main granting clause with vesting
+    // Main granting clause with vesting (ALL CAPS for data)
     const vestingText = vesting.toUpperCase();
-    const grantorLine = 'GRANTOR(S) ' + data.grantor + ', ' + vestingText + ', hereby GRANT(s) to ' + data.trustee + ', TRUSTEE OF';
+    const grantorLine = 'GRANTOR(S) ' + data.grantor.toUpperCase() + ', ' + vestingText + ', hereby GRANT(s) to ' + data.trustee.toUpperCase() + ', TRUSTEE OF';
     drawText(grantorLine, margin, y, 11, font, page2);
     y -= 14;
     
-    const trustLine = 'THE ' + data.trustName + ' DATED ' + trustDateFormatted + ', AND ANY AMENDMENTS THERETO';
+    const trustLine = 'THE ' + data.trustName.toUpperCase() + ' DATED ' + trustDateFormatted.toUpperCase() + ', AND ANY AMENDMENTS THERETO';
     drawText(trustLine, margin, y, 11, font, page2);
     y -= 18;
 
-    const propertyLine = 'the real property in the CITY OF ' + data.city.toUpperCase() + ' County of ' + data.county + ' State of CA, described as:';
+    const propertyLine = 'the real property in the CITY OF ' + data.city.toUpperCase() + ' County of ' + data.county.toUpperCase() + ' State of CA, described as:';
     drawText(propertyLine, margin, y, 11, font, page2);
     y -= 18;
 
-    // Legal Description
+    // Legal Description (keep original case as it's a legal description)
     y = drawWrappedText(data.legalDescription, margin, y, width - (margin * 2), 10, 13, font, page2);
     y -= 18;
 
@@ -309,16 +314,16 @@ exports.handler = async (event, context) => {
     // Signature line
     drawText('_________________________________', margin, y, 11, font, page2);
     y -= 14;
-    drawText(data.grantor, margin, y, 11, font, page2);
+    drawText(data.grantor.toUpperCase(), margin, y, 11, font, page2);
     y -= 30;
 
     // Mail tax statements
     drawText('MAIL TAX STATEMENTS TO:', margin, y, 10, boldFont, page2);
     y -= 14;
-    drawText(data.trustee || data.grantor, margin, y, 10, font, page2);
+    drawText((data.trustee || data.grantor).toUpperCase(), margin, y, 10, font, page2);
     y -= 12;
     if (data.mailingAddress) {
-      drawText(data.mailingAddress, margin, y, 10, font, page2);
+      drawText(data.mailingAddress.toUpperCase(), margin, y, 10, font, page2);
     }
 
     console.log('Main deed page created');
