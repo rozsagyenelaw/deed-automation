@@ -104,6 +104,7 @@ export default function Home() {
         a.download = `${grantor.replace(/\s+/g, '_')}_Trust_Transfer_Deed.pdf`;
         a.click();
         URL.revokeObjectURL(url);
+        alert('Trust Transfer Deed generated successfully!');
       } else {
         alert('Failed to generate Trust Transfer Deed');
       }
@@ -138,6 +139,7 @@ export default function Home() {
         a.download = `${county.replace(/\s+/g, '_')}_PCOR_${apn}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
+        alert('PCOR form generated successfully!');
       } else {
         alert('Failed to generate PCOR form');
       }
@@ -411,27 +413,60 @@ export default function Home() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
                   <h3 className="font-semibold text-blue-900 mb-2">Ready to Generate:</h3>
                   <ul className="list-disc list-inside space-y-1 text-sm text-blue-800">
-                    <li>Trust Transfer Deed</li>
-                    <li>PCOR Form for {county} County</li>
+                    <li>Trust Transfer Deed for {county} County</li>
+                    <li>PCOR Form (select county below)</li>
                   </ul>
                 </div>
 
-                <div className="space-y-4">
-                  <button
-                    onClick={handleGenerateDeed}
-                    disabled={isProcessing}
-                    className="w-full px-8 py-4 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  >
-                    {isProcessing ? 'Generating...' : '📄 Generate Trust Transfer Deed'}
-                  </button>
+                <div className="space-y-6">
+                  {/* Trust Transfer Deed */}
+                  <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                      Trust Transfer Deed
+                    </h3>
+                    <button
+                      onClick={handleGenerateDeed}
+                      disabled={isProcessing}
+                      className="w-full px-8 py-4 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {isProcessing ? 'Generating...' : '📄 Generate Trust Transfer Deed'}
+                    </button>
+                  </div>
 
-                  <button
-                    onClick={handleGeneratePCOR}
-                    disabled={isProcessing}
-                    className="w-full px-8 py-4 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                  >
-                    {isProcessing ? 'Generating...' : '📋 Generate PCOR Form'}
-                  </button>
+                  {/* PCOR Form */}
+                  <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-4">
+                      PCOR Form (Preliminary Change of Ownership Report)
+                    </h3>
+                    
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Select County for PCOR *
+                      </label>
+                      <select
+                        value={county}
+                        onChange={(e) => setCounty(e.target.value as any)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 text-lg"
+                      >
+                        <option value="Los Angeles">Los Angeles County</option>
+                        <option value="Ventura">Ventura County</option>
+                        <option value="Riverside">Riverside County</option>
+                        <option value="San Bernardino">San Bernardino County</option>
+                        <option value="Orange">Orange County</option>
+                      </select>
+                      <p className="mt-2 text-sm text-gray-500">
+                        Each county has a different PCOR form format
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleGeneratePCOR}
+                      disabled={isProcessing}
+                      className="w-full px-8 py-4 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                      {isProcessing ? 'Generating...' : `📋 Generate ${county} County PCOR`}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex justify-start pt-4">
