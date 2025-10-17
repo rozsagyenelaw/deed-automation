@@ -1,11 +1,14 @@
 /**
  * Netlify serverless function for OCR extraction
- * Handles both images and PDFs (converts PDF first page to image)
+ * Automatically converts PDFs to images and extracts text using Google Cloud Vision API
  */
 
 const multipart = require('lambda-multipart-parser');
 const https = require('https');
-const { PDFDocument } = require('pdf-lib');
+
+// Import PDF.js
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { createCanvas } = require('canvas');
 
 // Google Cloud Vision API key
 const GOOGLE_API_KEY = 'AIzaSyB3wG7fP2uWGYKGWxHUGlMS2Y9zIqlL_gg';
@@ -46,48 +49,39 @@ exports.handler = async (event, context) => {
     const file = result.files[0];
     console.log('Processing file:', file.filename, 'Type:', file.contentType, 'Size:', file.content.length);
 
-    // For PDFs, we need to tell the user to upload as image instead
+    // Check if it's a PDF
     const isPDF = file.filename.toLowerCase().endsWith('.pdf') || 
                   file.contentType === 'application/pdf';
 
+    let base64Image;
+
     if (isPDF) {
-      console.log('PDF detected - OCR not available for PDFs in this environment');
+      console.log('PDF detected - converting to image for OCR...');
       
-      return {
-        statusCode: 200,
-        headers,
-        body: JSON.stringify({
-          success: false,
-          error: 'PDF_NOT_SUPPORTED',
-          message: 'For best results, please convert your PDF to an image (PNG/JPG) first, or enter the information manually.',
-          apn: '',
-          grantor: '',
-          trustee: '',
-          trustName: '',
-          trustDate: '',
-          propertyAddress: '',
-          city: '',
-          county: 'Los Angeles',
-          legalDescription: '',
-          mailingAddress: '',
-        }),
-      };
+      // Convert PDF first page to image
+      base64Image = await convertPDFToImage(file.content);
+      
+      if (!base64Image) {
+        throw new Error('Failed to convert PDF to image');
+      }
+      
+      console.log('PDF converted to image successfully');
+    } else {
+      // Already an image
+      base64Image = Buffer.from(file.content).toString('base64');
     }
 
-    // Process image files
-    const base64File = Buffer.from(file.content).toString('base64');
-
-    console.log('Calling Google Vision API for image...');
-    const ocrText = await performGoogleOCR(base64File);
+    // Perform OCR on the image
+    console.log('Calling Google Vision API...');
+    const ocrText = await performGoogleOCR(base64Image);
 
     if (!ocrText) {
       throw new Error('No text extracted from document');
     }
 
-    console.log('OCR successful! Text length:', ocrText.length);
-    console.log('First 200 chars:', ocrText.substring(0, 200));
+    console.log('OCR successful! Extracted text length:', ocrText.length);
 
-    // Parse the OCR text
+    // Parse the extracted text
     const extractedData = parseOCRText(ocrText);
 
     console.log('Extracted data:', JSON.stringify(extractedData, null, 2));
@@ -106,7 +100,6 @@ exports.handler = async (event, context) => {
     console.error('ERROR processing deed:', error.message);
     console.error('Stack:', error.stack);
     
-    // Return error with success: false
     return {
       statusCode: 200,
       headers,
@@ -129,13 +122,54 @@ exports.handler = async (event, context) => {
   }
 };
 
-function performGoogleOCR(base64File) {
+async function convertPDFToImage(pdfBuffer) {
+  try {
+    // Load PDF
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      useSystemFonts: true,
+    });
+    
+    const pdf = await loadingTask.promise;
+    
+    // Get first page
+    const page = await pdf.getPage(1);
+    
+    // Set scale for high quality
+    const scale = 2.0;
+    const viewport = page.getViewport({ scale });
+    
+    // Create canvas
+    const canvas = createCanvas(viewport.width, viewport.height);
+    const context = canvas.getContext('2d');
+    
+    // Render PDF page to canvas
+    const renderContext = {
+      canvasContext: context,
+      viewport: viewport,
+    };
+    
+    await page.render(renderContext).promise;
+    
+    // Convert canvas to base64 image
+    const imageBuffer = canvas.toBuffer('image/png');
+    const base64Image = imageBuffer.toString('base64');
+    
+    return base64Image;
+    
+  } catch (error) {
+    console.error('Error converting PDF to image:', error);
+    throw new Error('Failed to convert PDF: ' + error.message);
+  }
+}
+
+function performGoogleOCR(base64Image) {
   return new Promise((resolve, reject) => {
     const requestBody = JSON.stringify({
       requests: [
         {
           image: {
-            content: base64File
+            content: base64Image
           },
           features: [
             {
@@ -165,8 +199,6 @@ function performGoogleOCR(base64File) {
 
       res.on('end', () => {
         try {
-          console.log('Google Vision response code:', res.statusCode);
-          
           if (res.statusCode !== 200) {
             console.error('API error response:', data);
             reject(new Error(`API returned status ${res.statusCode}`));
