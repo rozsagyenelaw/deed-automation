@@ -1,10 +1,11 @@
 /**
  * Netlify serverless function for OCR extraction
- * Uses Google Cloud Vision API with proper PDF handling
+ * Handles both images and PDFs (converts PDF first page to image)
  */
 
 const multipart = require('lambda-multipart-parser');
 const https = require('https');
+const { PDFDocument } = require('pdf-lib');
 
 // Google Cloud Vision API key
 const GOOGLE_API_KEY = 'AIzaSyB3wG7fP2uWGYKGWxHUGlMS2Y9zIqlL_gg';
@@ -43,34 +44,53 @@ exports.handler = async (event, context) => {
     }
 
     const file = result.files[0];
-    console.log('Processing file:', file.filename, 'Size:', file.content.length);
+    console.log('Processing file:', file.filename, 'Type:', file.contentType, 'Size:', file.content.length);
 
-    // Check file size (Google Vision limit is 20MB for base64)
-    if (file.content.length > 20 * 1024 * 1024) {
+    // For PDFs, we need to tell the user to upload as image instead
+    const isPDF = file.filename.toLowerCase().endsWith('.pdf') || 
+                  file.contentType === 'application/pdf';
+
+    if (isPDF) {
+      console.log('PDF detected - OCR not available for PDFs in this environment');
+      
       return {
-        statusCode: 400,
+        statusCode: 200,
         headers,
         body: JSON.stringify({
           success: false,
-          error: 'File too large. Please upload a file smaller than 20MB.'
+          error: 'PDF_NOT_SUPPORTED',
+          message: 'For best results, please convert your PDF to an image (PNG/JPG) first, or enter the information manually.',
+          apn: '',
+          grantor: '',
+          trustee: '',
+          trustName: '',
+          trustDate: '',
+          propertyAddress: '',
+          city: '',
+          county: 'Los Angeles',
+          legalDescription: '',
+          mailingAddress: '',
         }),
       };
     }
 
+    // Process image files
     const base64File = Buffer.from(file.content).toString('base64');
 
-    // Call Google Cloud Vision API
-    console.log('Calling Google Vision API...');
+    console.log('Calling Google Vision API for image...');
     const ocrText = await performGoogleOCR(base64File);
 
     if (!ocrText) {
       throw new Error('No text extracted from document');
     }
 
-    console.log('OCR successful, text length:', ocrText.length);
+    console.log('OCR successful! Text length:', ocrText.length);
+    console.log('First 200 chars:', ocrText.substring(0, 200));
 
-    // Parse the OCR text to extract structured data
+    // Parse the OCR text
     const extractedData = parseOCRText(ocrText);
+
+    console.log('Extracted data:', JSON.stringify(extractedData, null, 2));
 
     return {
       statusCode: 200,
@@ -83,14 +103,17 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
-    console.error('Error processing deed:', error);
+    console.error('ERROR processing deed:', error.message);
+    console.error('Stack:', error.stack);
     
-    // Return a friendly error with empty fields so user can enter manually
+    // Return error with success: false
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        success: true,
+        success: false,
+        error: error.message,
+        message: 'Failed to extract data from document. Please enter information manually.',
         apn: '',
         grantor: '',
         trustee: '',
@@ -101,8 +124,6 @@ exports.handler = async (event, context) => {
         county: 'Los Angeles',
         legalDescription: '',
         mailingAddress: '',
-        error: error.message,
-        message: 'Could not extract data automatically. Please enter information manually.',
       }),
     };
   }
@@ -118,13 +139,9 @@ function performGoogleOCR(base64File) {
           },
           features: [
             {
-              type: 'DOCUMENT_TEXT_DETECTION',
-              maxResults: 1
+              type: 'DOCUMENT_TEXT_DETECTION'
             }
-          ],
-          imageContext: {
-            languageHints: ['en']
-          }
+          ]
         }
       ]
     });
@@ -135,9 +152,8 @@ function performGoogleOCR(base64File) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(requestBody)
       },
-      timeout: 30000 // 30 second timeout
+      timeout: 30000
     };
 
     const req = https.request(options, (res) => {
@@ -149,16 +165,18 @@ function performGoogleOCR(base64File) {
 
       res.on('end', () => {
         try {
-          console.log('Google Vision API response status:', res.statusCode);
+          console.log('Google Vision response code:', res.statusCode);
           
           if (res.statusCode !== 200) {
-            reject(new Error(`API returned status ${res.statusCode}: ${data}`));
+            console.error('API error response:', data);
+            reject(new Error(`API returned status ${res.statusCode}`));
             return;
           }
 
           const response = JSON.parse(data);
           
           if (response.error) {
+            console.error('API error:', response.error);
             reject(new Error(response.error.message || 'Google Vision API error'));
             return;
           }
@@ -167,35 +185,35 @@ function performGoogleOCR(base64File) {
             const result = response.responses[0];
             
             if (result.error) {
+              console.error('OCR error:', result.error);
               reject(new Error(result.error.message || 'OCR processing error'));
               return;
             }
 
             const fullTextAnnotation = result.fullTextAnnotation;
             if (fullTextAnnotation && fullTextAnnotation.text) {
-              console.log('Text extracted successfully');
               resolve(fullTextAnnotation.text);
             } else {
               reject(new Error('No text found in document'));
             }
           } else {
-            reject(new Error('Invalid response from Google Vision API'));
+            reject(new Error('Invalid response from API'));
           }
         } catch (e) {
           console.error('Parse error:', e);
-          reject(new Error('Failed to parse OCR response: ' + e.message));
+          reject(new Error('Failed to parse response: ' + e.message));
         }
       });
     });
 
     req.on('error', (e) => {
       console.error('Request error:', e);
-      reject(new Error('OCR request failed: ' + e.message));
+      reject(new Error('Request failed: ' + e.message));
     });
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('OCR request timed out'));
+      reject(new Error('Request timed out'));
     });
 
     req.write(requestBody);
@@ -204,8 +222,6 @@ function performGoogleOCR(base64File) {
 }
 
 function parseOCRText(text) {
-  console.log('Parsing OCR text...');
-  
   return {
     apn: extractAPN(text),
     grantor: extractGrantor(text),
@@ -224,9 +240,7 @@ function extractAPN(text) {
   const patterns = [
     /APN[:\s]*([0-9\-]+)/i,
     /Assessor'?s?\s+Parcel\s+Number[:\s]*([0-9\-]+)/i,
-    /Parcel\s+Number[:\s]*([0-9\-]+)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) return match[1].trim();
@@ -236,17 +250,12 @@ function extractAPN(text) {
 
 function extractGrantor(text) {
   const patterns = [
-    /GRANTOR\(S\)\s+([^,]+(?:,[^,]+)?),\s*(?:a|an|the)/i,
-    /GRANTOR[:\s]+([^,]+(?:,[^,]+)?),\s*(?:a|an|the)/i,
+    /GRANTOR\(S\)\s+([^,]+),\s*(?:a|an)/i,
+    /GRANTOR[:\s]+([^,]+),\s*(?:a|an)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match) {
-      let grantor = match[1].trim();
-      grantor = grantor.replace(/\s*hereby\s+GRANT.*$/i, '').trim();
-      return grantor;
-    }
+    if (match) return match[1].trim();
   }
   return '';
 }
@@ -254,32 +263,22 @@ function extractGrantor(text) {
 function extractTrustee(text) {
   const patterns = [
     /GRANT\(s\)\s+to\s+([^,]+),\s*TRUSTEE/i,
-    /grants?\s+to\s+([^,]+),\s*(?:as\s+)?TRUSTEE/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) return match[1].trim();
   }
-  
-  const grantor = extractGrantor(text);
-  return grantor.split(',')[0].trim();
+  return extractGrantor(text).split(',')[0].trim();
 }
 
 function extractTrustName(text) {
   const patterns = [
-    /TRUSTEE\s+OF\s+THE\s+([^\n]+?)(?:DATED|,\s*dated)/i,
-    /TRUSTEE\s+OF\s+([^\n]+?Living\s+Trust)/i,
-    /The\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+Living\s+Trust)/,
+    /TRUSTEE\s+OF\s+THE\s+([^\n]+?)(?:DATED)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let trustName = match[1].trim();
-      trustName = trustName.replace(/^THE\s+/i, '');
-      trustName = trustName.replace(/\s+DATED.*$/i, '').trim();
-      return trustName;
+      return match[1].trim().replace(/^THE\s+/i, '');
     }
   }
   return '';
@@ -288,16 +287,10 @@ function extractTrustName(text) {
 function extractTrustDate(text) {
   const patterns = [
     /DATED\s+([A-Z][a-z]+\s+\d{1,2},?\s+\d{4})/i,
-    /dated\s+([^\n,]+?\d{4})/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match) {
-      let date = match[1].trim();
-      date = date.replace(/,?\s*(?:AND|,).*$/i, '').trim();
-      return date;
-    }
+    if (match) return match[1].trim();
   }
   return '';
 }
@@ -305,17 +298,10 @@ function extractTrustDate(text) {
 function extractPropertyAddress(text) {
   const patterns = [
     /Commonly\s+known\s+as[:\s]*([^\n]+)/i,
-    /Property\s+Address[:\s]*([^\n]+)/i,
-    /located\s+at[:\s]*([^\n]+)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match) {
-      let address = match[1].trim();
-      address = address.replace(/[,.]$/, '').trim();
-      return address;
-    }
+    if (match) return match[1].trim().replace(/[,.]$/, '');
   }
   return '';
 }
@@ -323,9 +309,7 @@ function extractPropertyAddress(text) {
 function extractCity(text) {
   const patterns = [
     /CITY\s+OF\s+([A-Z]+)/i,
-    /,\s*([A-Z][A-Z\s]+),\s*CA/,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) return match[1].trim();
@@ -335,9 +319,8 @@ function extractCity(text) {
 
 function extractCounty(text) {
   const patterns = [
-    /County\s+of\s+([A-Z][a-z\s]+?)(?:\s+State|\s+CA|\n)/i,
+    /County\s+of\s+([A-Z][a-z\s]+?)(?:\s+State)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) return match[1].trim();
@@ -347,30 +330,22 @@ function extractCounty(text) {
 
 function extractLegalDescription(text) {
   const startMatch = text.match(/described\s+as[:\s]*/i);
-  const endMatch = text.match(/Commonly\s+known\s+as/i);
-
+  const endMatch = text.match(/Commonly\s+known/i);
   if (startMatch && endMatch) {
     const start = startMatch.index + startMatch[0].length;
     const end = endMatch.index;
-    const legalDesc = text.substring(start, end).trim();
-    return legalDesc.replace(/\s+/g, ' ').trim();
+    return text.substring(start, end).trim().replace(/\s+/g, ' ');
   }
-
   return '';
 }
 
 function extractMailingAddress(text) {
   const patterns = [
-    /MAIL\s+TAX\s+STATEMENTS\s+TO[:\s]*([^\n]+(?:\n[^\n]+){0,2})/i,
+    /MAIL\s+TAX\s+STATEMENTS\s+TO[:\s]*([^\n]+)/i,
   ];
-
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match) {
-      let address = match[1].trim();
-      const lines = address.split('\n').slice(0, 3);
-      return lines.join(', ').replace(/\s+/g, ' ').trim();
-    }
+    if (match) return match[1].trim();
   }
   return '';
 }
