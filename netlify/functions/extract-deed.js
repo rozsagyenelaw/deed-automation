@@ -187,7 +187,10 @@ function performOCR(base64File, mimeType) {
           if (response.ParsedResults && response.ParsedResults.length > 0) {
             const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
             console.log('Text extracted successfully, length:', text.length);
-            console.log('First 2000 chars:', text.substring(0, 2000));
+            console.log('First 2500 chars:', text.substring(0, 2500));
+            if (text.length > 500) {
+              console.log('Last 800 chars:', text.substring(text.length - 800));
+            }
             resolve(text);
           } else {
             reject(new Error('No text extracted from document'));
@@ -311,7 +314,6 @@ function extractPropertyAddress(text) {
   let match = text.match(fullAddressPattern);
   if (match) {
     let address = match[1].trim();
-    // Clean up extra spaces
     address = address.replace(/\s+/g, ' ');
     console.log('Found full property address:', address);
     return address;
@@ -400,70 +402,127 @@ function extractCounty(text) {
 }
 
 function extractLegalDescription(text) {
-  // Grant deeds typically have legal description after "receipt of which is hereby acknowledged"
-  // Pattern: Look for text between acknowledgment and APN or end markers
+  console.log('=== SEARCHING FOR LEGAL DESCRIPTION ===');
+  console.log('Searching in text of length:', text.length);
   
-  // Find start point
-  const startMarkers = [
-    /receipt\s+of\s+which\s+is\s+hereby\s+acknowledged[,\s]+(?:hereby\s+)?(?:grant|convey)[s]?\s+to[^:]+:\s*/i,
-    /the\s+following\s+(?:described\s+)?(?:real\s+)?property[:\s]*/i,
-    /property\s+is\s+(?:situated|located)\s+in[^:]+:\s*/i,
-  ];
-  
-  let startIndex = -1;
-  for (const pattern of startMarkers) {
-    const match = text.match(pattern);
-    if (match) {
-      startIndex = match.index + match[0].length;
-      console.log('Found legal description start at index:', startIndex);
-      break;
+  // First check if there's an Exhibit A reference
+  const exhibitARef = /(?:legal\s+description|property\s+description|described)\s+(?:is\s+)?(?:attached\s+as|in|on)\s+Exhibit\s+["\']?A["\']?/i;
+  if (exhibitARef.test(text)) {
+    console.log('Found Exhibit A reference');
+    
+    // Try to extract the Exhibit A content
+    const exhibitAStart = text.search(/EXHIBIT\s+["\']?A["\']?/i);
+    if (exhibitAStart !== -1) {
+      console.log('Found EXHIBIT A section at index:', exhibitAStart);
+      
+      // Extract everything after "EXHIBIT A" until we hit another exhibit or end
+      const exhibitText = text.substring(exhibitAStart);
+      const exhibitBStart = exhibitText.search(/EXHIBIT\s+["\']?B["\']?/i);
+      
+      let exhibitAContent;
+      if (exhibitBStart !== -1) {
+        exhibitAContent = exhibitText.substring(0, exhibitBStart);
+      } else {
+        // Take up to 2000 chars or end of text
+        exhibitAContent = exhibitText.substring(0, Math.min(2000, exhibitText.length));
+      }
+      
+      // Clean up the content
+      exhibitAContent = exhibitAContent.replace(/EXHIBIT\s+["\']?A["\']?[:\s]*/i, '');
+      exhibitAContent = exhibitAContent.replace(/LEGAL\s+DESCRIPTION[:\s]*/i, '');
+      exhibitAContent = exhibitAContent.trim().replace(/\s+/g, ' ');
+      
+      if (exhibitAContent.length > 30) {
+        console.log('Extracted Exhibit A content, length:', exhibitAContent.length);
+        return exhibitAContent;
+      }
     }
+    
+    // If we can't find the actual exhibit, return a note
+    return 'See Exhibit A attached to original deed';
   }
   
-  if (startIndex === -1) {
-    // Try alternative: look for "Lot" keyword
-    const lotMatch = text.match(/\b(Lot\s+[0-9]+)/i);
-    if (lotMatch) {
-      startIndex = lotMatch.index;
-      console.log('Found Lot at index:', startIndex);
-    }
+  // Try to find legal description in main text
+  // Pattern 1: After "hereby grant(s) to [name], the following"
+  const pattern1 = /hereby\s+GRANT\(S\)\s+to\s+[^,]+,\s+(?:the\s+following[^:]*:\s*)([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|This\s+conveyance|Situated)/i;
+  let match = text.match(pattern1);
+  if (match) {
+    let desc = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found legal description (pattern 1), length:', desc.length);
+    return desc;
   }
   
-  if (startIndex === -1) {
-    console.log('No legal description start marker found');
-    return '';
+  // Pattern 2: Look for "real property" followed by description
+  const pattern2 = /(?:following\s+)?(?:described\s+)?real\s+property[:\s]+([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|Situated|located)/i;
+  match = text.match(pattern2);
+  if (match) {
+    let desc = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found legal description (pattern 2), length:', desc.length);
+    return desc;
   }
   
-  // Find end point
+  // Pattern 3: Look for common legal description starters (Lot, Parcel)
+  const pattern3 = /((?:Lot|PARCEL|LOT)\s+[0-9]+[^.]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|Situated)/i;
+  match = text.match(pattern3);
+  if (match) {
+    let desc = match[1].trim().replace(/\s+/g, ' ');
+    console.log('Found legal description (pattern 3), length:', desc.length);
+    return desc;
+  }
+  
+  // Pattern 4: Between acknowledgment and APN/Situated
+  const acknowledgeIndex = text.search(/receipt\s+of\s+which\s+is\s+hereby\s+acknowledged/i);
   const endMarkers = [
-    /(?:APN|AP#|Assessor)/i,
-    /EXCEPTING/i,
-    /(?:This\s+)?(?:Grant|conveyance)\s+is\s+made/i,
+    { pattern: /(?:APN|AP#)[:.\s]*[0-9]/i, name: 'APN' },
+    { pattern: /Situated\s+in/i, name: 'Situated' },
+    { pattern: /EXCEPTING/i, name: 'EXCEPTING' }
   ];
   
-  let endIndex = text.length;
-  const searchText = text.substring(startIndex);
-  
-  for (const pattern of endMarkers) {
-    const match = searchText.match(pattern);
-    if (match && match.index < (endIndex - startIndex)) {
-      endIndex = startIndex + match.index;
-      console.log('Found legal description end at index:', endIndex);
-      break;
+  if (acknowledgeIndex !== -1) {
+    console.log('Found acknowledgment at:', acknowledgeIndex);
+    
+    // Find the earliest end marker
+    let earliestEnd = -1;
+    let earliestName = '';
+    
+    for (const marker of endMarkers) {
+      const index = text.substring(acknowledgeIndex).search(marker.pattern);
+      if (index !== -1 && (earliestEnd === -1 || index < earliestEnd)) {
+        earliestEnd = index;
+        earliestName = marker.name;
+      }
+    }
+    
+    if (earliestEnd !== -1) {
+      console.log('Found end marker', earliestName, 'at offset:', earliestEnd);
+      
+      // Skip forward past the grantee text (usually within 300 chars)
+      let startSearch = acknowledgeIndex + 250;
+      let endSearch = acknowledgeIndex + earliestEnd;
+      
+      let legalDesc = text.substring(startSearch, endSearch).trim();
+      
+      // Clean up
+      legalDesc = legalDesc.replace(/^[^A-Z]*/, ''); // Remove leading junk
+      legalDesc = legalDesc.replace(/hereby\s+GRANT\(S\)[^:]*:\s*/i, '');
+      legalDesc = legalDesc.replace(/\s+/g, ' ');
+      
+      if (legalDesc.length >= 30) {
+        console.log('Found legal description (pattern 4), length:', legalDesc.length);
+        console.log('Legal description preview:', legalDesc.substring(0, 150));
+        return legalDesc;
+      }
     }
   }
   
-  // Extract and clean
-  let legalDesc = text.substring(startIndex, endIndex).trim();
-  legalDesc = legalDesc.replace(/\s+/g, ' '); // Normalize whitespace
+  console.log('Could not find legal description with any pattern');
   
-  // Validate length
-  if (legalDesc.length >= 30 && legalDesc.length <= 2000) {
-    console.log('Found Legal Description, length:', legalDesc.length);
-    return legalDesc;
+  // Debug: show text around where it should be
+  if (acknowledgeIndex !== -1) {
+    console.log('=== DEBUG: Text after acknowledgment (800 chars) ===');
+    console.log(text.substring(acknowledgeIndex + 200, acknowledgeIndex + 1000));
   }
   
-  console.log('Legal description too short or too long:', legalDesc.length);
   return '';
 }
 
