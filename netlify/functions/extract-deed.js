@@ -157,7 +157,7 @@ function performOCR(base64File, mimeType) {
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': Buffer.byteLength(body)
       },
-      timeout: 20000 // Reduced from 60000
+      timeout: 20000
     };
 
     const req = https.request(options, (res) => {
@@ -177,10 +177,8 @@ function performOCR(base64File, mimeType) {
             const errorMsg = response.ErrorMessage?.[0] || 'OCR processing error';
             console.error('OCR error:', errorMsg);
             
-            // Check if it's a page limit error
             if (errorMsg.includes('maximum page limit')) {
               console.log('Page limit hit - but we got some pages, continuing...');
-              // Try to extract text from what we got
               if (response.ParsedResults && response.ParsedResults.length > 0) {
                 const text = response.ParsedResults.map(r => r.ParsedText).join('\n');
                 console.log('Extracted text from available pages, length:', text.length);
@@ -227,7 +225,6 @@ function performOCR(base64File, mimeType) {
 }
 
 function parseOCRText(text) {
-  // Log for debugging
   console.log('=== PARSING OCR TEXT ===');
   console.log('Full text length:', text.length);
   
@@ -244,7 +241,6 @@ function parseOCRText(text) {
     mailingAddress: '',
   };
   
-  // Set mailing address to property address
   data.mailingAddress = data.propertyAddress;
   
   return data;
@@ -252,9 +248,11 @@ function parseOCRText(text) {
 
 function extractAPN(text) {
   const patterns = [
+    // "BEARING ASSESSOR'S IDENTIFICATION NUMBER 8633-014-003"
+    /BEARING\s+ASSESSOR['\s]?S?\s+IDENTIFICATION\s+NUMBER\s+([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})/i,
     /AP#:\s*([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})/i,
     /APN[:\s#]*([0-9]{4}[-\s]?[0-9]{3}[-\s]?[0-9]{3})/i,
-    /Assessor['\s]?s?\s+Parcel\s+(?:Number|No\.?)[:\s]*([0-9\-\s]+)/i,
+    /Assessor['\s]?s?\s+(?:Parcel|Identification)\s+(?:Number|No\.?)[:\s]*([0-9\-\s]+)/i,
     /\b([0-9]{4}[-]?[0-9]{3}[-]?[0-9]{3})\b/,
   ];
   
@@ -273,27 +271,59 @@ function extractAPN(text) {
 }
 
 function extractGrantor(text) {
-  // Extract GRANTEE from original deed
+  // Extract GRANTEE from original deed (they become the grantor in trust transfer)
+  
+  // Helper function to normalize and clean names
+  function cleanName(name) {
+    if (!name) return '';
+    
+    // Remove trailing descriptions
+    name = name.replace(/,\s*(?:a|an)\s+.*$/i, '');
+    name = name.replace(/\s+as\s+.*$/i, '');
+    
+    // Normalize spacing
+    name = name.replace(/\s+/g, ' ').trim();
+    
+    // Convert to title case if all caps
+    if (name === name.toUpperCase()) {
+      name = name.split(' ').map(word => {
+        // Keep initials as is (e.g., "D.")
+        if (word.length <= 2 || word.endsWith('.')) {
+          return word;
+        }
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }).join(' ');
+    }
+    
+    return name;
+  }
+  
   const patterns = [
-    // From "WHEN RECORDED MAIL TO:" section
-    /WHEN RECORDED MAIL TO:\s*([A-Z][a-z]+\s+[A-Z][a-z]+)/i,
+    // From "WHEN RECORDED MAIL TO:" section - handle ALL CAPS
+    // "CANDACE D. ROY" or "Candace D. Roy"
+    /(?:WHEN RECORDED|RECORDING REQUESTED BY[\s\S]{0,100}?WHEN RECORDED)[\s\S]{0,50}?MAIL TO:\s*\n?\s*([A-Z][A-Z\s.]+)/i,
     
-    // "GRANTEE: Arthur Avagyants"
-    /GRANTEE[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:,|\s+a|\s+an|\s*$)/i,
+    // "hereby GRANT(S) to CANDACE D. ROY, a married woman"
+    /hereby\s+GRANT\(S\)\s+to\s+([A-Z][A-Z\s.]+?)(?:,\s*(?:a|an)\s+)/i,
     
-    // "conveys to Arthur Avagyants, a married"
-    /(?:conveys?|grants?|transfers?)\s+to\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?:,\s*(?:a|an))/i,
+    // "GRANTEE: CANDACE D. ROY" or with description
+    /GRANTEE[:\s]+([A-Z][A-Z\s.]+?)(?:,|\s+a|\s+an|\s*$)/im,
     
-    // "Arthur Avagyants, a married man"
-    /\b([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:a|an)\s+(?:married|single|unmarried|widowed)/i,
+    // Standard patterns for mixed case
+    /(?:conveys?|grants?|transfers?)\s+to\s+([A-Z][a-z]+(?:\s+[A-Z]\.?)(?:\s+[A-Z][a-z]+)+)(?:,\s*(?:a|an))/i,
+    
+    // Name followed by marital status
+    /\b([A-Z][a-z]+\s+[A-Z]\.?\s+[A-Z][a-z]+),\s*(?:a|an)\s+(?:married|single|unmarried|widowed)/i,
   ];
   
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      let name = match[1].trim();
-      name = name.replace(/,.*$/, '').trim();
-      if (name.split(/\s+/).length >= 2 && name.split(/\s+/).length <= 4) {
+      let name = cleanName(match[1]);
+      
+      // Validate: should have at least first and last name
+      const nameParts = name.split(/\s+/).filter(p => p.length > 0);
+      if (nameParts.length >= 2 && nameParts.length <= 5) {
         console.log('Found GRANTEE (becomes grantor):', name);
         return name;
       }
@@ -317,47 +347,42 @@ function extractTrustDate(text) {
 }
 
 function extractPropertyAddress(text) {
-  // Pattern to match: "6821 Saint Estaban Street Los Angeles (Tujunga area), CA 91042"
-  const fullAddressPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s*\([^)]+\))?,?\s+(?:CA|California)\s+[0-9]{5})/i;
-  
-  let match = text.match(fullAddressPattern);
-  if (match) {
-    let address = match[1].trim();
-    address = address.replace(/\s+/g, ' ');
-    console.log('Found full property address:', address);
-    return address;
-  }
-  
-  // Try without parenthetical
-  const addressWithZipPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,?\s+(?:CA|California)\s+[0-9]{5})/i;
-  
-  match = text.match(addressWithZipPattern);
-  if (match) {
-    let address = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found property address with zip:', address);
-    return address;
-  }
-  
-  // Fallback: street + city + state (manually add zip if found)
-  const streetPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?)\b/i;
-  
-  match = text.match(streetPattern);
-  if (match) {
-    let address = match[1].trim();
-    console.log('Found street address:', address);
+  // Pattern to match full address with various formats
+  const patterns = [
+    // Standard format with parenthetical
+    /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s*\([^)]+\))?,?\s+(?:CA|California)\s+[0-9]{5})/i,
     
-    // Try to append city, state, zip
+    // Without parenthetical
+    /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,?\s+(?:CA|California)\s+[0-9]{5})/i,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      let address = match[1].trim().replace(/\s+/g, ' ');
+      console.log('Found property address:', address);
+      return address;
+    }
+  }
+  
+  // Fallback: construct from parts
+  const streetPattern = /\b([0-9]{3,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Way|Court|Ct)\.?)\b/i;
+  const streetMatch = text.match(streetPattern);
+  
+  if (streetMatch) {
+    let address = streetMatch[1].trim();
     const city = extractCity(text);
+    
     if (city) {
       address += `, ${city}, CA`;
       
-      // Look for zip code
       const zipMatch = text.match(/\b[0-9]{5}\b/);
       if (zipMatch) {
         address += ` ${zipMatch[0]}`;
       }
     }
     
+    console.log('Constructed property address:', address);
     return address;
   }
   
@@ -369,20 +394,31 @@ function extractCity(text) {
     // "Los Angeles (Tujunga area)"
     /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*\([^)]+\),?\s+(?:CA|California)/i,
     
-    // "City of Los Angeles"
-    /City\s+of\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    // "City of Los Angeles" or "CITY OF LOS ANGELES"
+    /CITY\s+OF\s+([A-Z\s]+?)(?:,|\s+COUNTY)/i,
     
     // ", Los Angeles, CA"
     /,\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),\s*(?:CA|California)/i,
     
-    // Known cities
-    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica|Tujunga)/i,
+    // "IN THE CITY OF GLENDORA"
+    /IN\s+THE\s+CITY\s+OF\s+([A-Z]+)/i,
+    
+    // Known cities (case insensitive)
+    /(Los Angeles|Ventura|Riverside|San Bernardino|Orange|Pasadena|Glendale|Burbank|Santa Monica|Tujunga|Glendora)/i,
   ];
   
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      const city = match[1].trim();
+      let city = match[1].trim();
+      
+      // Convert all-caps to title case
+      if (city === city.toUpperCase()) {
+        city = city.split(' ').map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+      }
+      
       if (city.length >= 3 && city.length <= 30 && !/[0-9]/.test(city)) {
         console.log('Found City:', city);
         return city;
@@ -397,13 +433,23 @@ function extractCounty(text) {
   const patterns = [
     /County\s+of\s+(Los Angeles|Ventura|Riverside|San Bernardino|Orange)/i,
     /(Los Angeles|Ventura|Riverside|San Bernardino|Orange)\s+County/i,
+    /COUNTY\s+OF\s+(LOS ANGELES|VENTURA|RIVERSIDE|SAN BERNARDINO|ORANGE)/i,
   ];
   
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      console.log('Found County:', match[1]);
-      return match[1].trim();
+      let county = match[1].trim();
+      
+      // Convert all-caps to title case
+      if (county === county.toUpperCase()) {
+        county = county.split(' ').map(word => 
+          word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+      }
+      
+      console.log('Found County:', county);
+      return county;
     }
   }
   
@@ -412,34 +458,28 @@ function extractCounty(text) {
 
 function extractLegalDescription(text) {
   console.log('=== SEARCHING FOR LEGAL DESCRIPTION ===');
-  console.log('Searching in text of length:', text.length);
   
-  // First check if there's an Exhibit A reference
+  // Check for Exhibit A reference
   const exhibitARef = /(?:legal\s+description|property\s+description|described)\s+(?:is\s+)?(?:attached\s+as|in|on)\s+Exhibit\s+["\']?A["\']?/i;
   if (exhibitARef.test(text)) {
     console.log('Found Exhibit A reference');
     
-    // Try to extract the Exhibit A content
     const exhibitAStart = text.search(/EXHIBIT\s+["\']?A["\']?/i);
     if (exhibitAStart !== -1) {
       console.log('Found EXHIBIT A section at index:', exhibitAStart);
       
-      // Extract everything after "EXHIBIT A" until we hit another exhibit or end
       const exhibitText = text.substring(exhibitAStart);
       const exhibitBStart = exhibitText.search(/EXHIBIT\s+["\']?B["\']?/i);
       
-      let exhibitAContent;
-      if (exhibitBStart !== -1) {
-        exhibitAContent = exhibitText.substring(0, exhibitBStart);
-      } else {
-        // Take up to 2000 chars or end of text
-        exhibitAContent = exhibitText.substring(0, Math.min(2000, exhibitText.length));
-      }
+      let exhibitAContent = exhibitBStart !== -1 
+        ? exhibitText.substring(0, exhibitBStart)
+        : exhibitText.substring(0, Math.min(2000, exhibitText.length));
       
-      // Clean up the content
-      exhibitAContent = exhibitAContent.replace(/EXHIBIT\s+["\']?A["\']?[:\s]*/i, '');
-      exhibitAContent = exhibitAContent.replace(/LEGAL\s+DESCRIPTION[:\s]*/i, '');
-      exhibitAContent = exhibitAContent.trim().replace(/\s+/g, ' ');
+      exhibitAContent = exhibitAContent
+        .replace(/EXHIBIT\s+["\']?A["\']?[:\s]*/i, '')
+        .replace(/LEGAL\s+DESCRIPTION[:\s]*/i, '')
+        .trim()
+        .replace(/\s+/g, ' ');
       
       if (exhibitAContent.length > 30) {
         console.log('Extracted Exhibit A content, length:', exhibitAContent.length);
@@ -447,95 +487,72 @@ function extractLegalDescription(text) {
       }
     }
     
-    // If we can't find the actual exhibit, return a note
     return 'See Exhibit A attached to original deed';
   }
   
-  // Try to find legal description in main text
-  // Pattern 1: After "hereby grant(s) to [name], the following"
-  const pattern1 = /hereby\s+GRANT\(S\)\s+to\s+[^,]+,\s+(?:the\s+following[^:]*:\s*)([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|This\s+conveyance|Situated)/i;
-  let match = text.match(pattern1);
+  // Pattern 1: Starts with "LOT" or "PARCEL" - common in tract maps
+  // "LOT 14 OF TRACT NO. 19560, IN THE CITY OF GLENDORA..."
+  const lotPattern = /((?:LOT|PARCEL)\s+[0-9]+[\s\S]{20,1500}?)(?:APN|AP#|Assessor|EXCEPTING|Situated|$)/i;
+  let match = text.match(lotPattern);
   if (match) {
     let desc = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found legal description (pattern 1), length:', desc.length);
+    console.log('Found legal description (LOT pattern), length:', desc.length);
     return desc;
   }
   
-  // Pattern 2: Look for "real property" followed by description
-  const pattern2 = /(?:following\s+)?(?:described\s+)?real\s+property[:\s]+([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|Situated|located)/i;
-  match = text.match(pattern2);
+  // Pattern 2: After "hereby grant(s) to [name], the following"
+  const grantPattern = /hereby\s+GRANT\(S\)\s+to\s+[^,]+,\s+(?:the\s+following[^:]*:\s*)([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|This\s+conveyance|Situated)/i;
+  match = text.match(grantPattern);
   if (match) {
     let desc = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found legal description (pattern 2), length:', desc.length);
+    console.log('Found legal description (grant pattern), length:', desc.length);
     return desc;
   }
   
-  // Pattern 3: Look for common legal description starters (Lot, Parcel)
-  const pattern3 = /((?:Lot|PARCEL|LOT)\s+[0-9]+[^.]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|Situated)/i;
-  match = text.match(pattern3);
+  // Pattern 3: Look for "real property" followed by description
+  const realPropertyPattern = /(?:following\s+)?(?:described\s+)?real\s+property[:\s]+([\s\S]{50,2000}?)(?:APN|AP#|Assessor|EXCEPTING|Situated|located)/i;
+  match = text.match(realPropertyPattern);
   if (match) {
     let desc = match[1].trim().replace(/\s+/g, ' ');
-    console.log('Found legal description (pattern 3), length:', desc.length);
+    console.log('Found legal description (real property pattern), length:', desc.length);
     return desc;
   }
   
   // Pattern 4: Between acknowledgment and APN/Situated
   const acknowledgeIndex = text.search(/receipt\s+of\s+which\s+is\s+hereby\s+acknowledged/i);
-  const endMarkers = [
-    { pattern: /(?:APN|AP#)[:.\s]*[0-9]/i, name: 'APN' },
-    { pattern: /Situated\s+in/i, name: 'Situated' },
-    { pattern: /EXCEPTING/i, name: 'EXCEPTING' }
-  ];
-  
   if (acknowledgeIndex !== -1) {
-    console.log('Found acknowledgment at:', acknowledgeIndex);
+    const endMarkers = [
+      { pattern: /(?:APN|AP#)[:.\s]*[0-9]/i, name: 'APN' },
+      { pattern: /Situated\s+in/i, name: 'Situated' },
+      { pattern: /EXCEPTING/i, name: 'EXCEPTING' },
+      { pattern: /BEARING\s+ASSESSOR/i, name: 'BEARING' }
+    ];
     
-    // Find the earliest end marker
     let earliestEnd = -1;
-    let earliestName = '';
-    
     for (const marker of endMarkers) {
       const index = text.substring(acknowledgeIndex).search(marker.pattern);
       if (index !== -1 && (earliestEnd === -1 || index < earliestEnd)) {
         earliestEnd = index;
-        earliestName = marker.name;
       }
     }
     
     if (earliestEnd !== -1) {
-      console.log('Found end marker', earliestName, 'at offset:', earliestEnd);
-      
-      // Skip forward past the grantee text (usually within 300 chars)
       let startSearch = acknowledgeIndex + 250;
       let endSearch = acknowledgeIndex + earliestEnd;
       
       let legalDesc = text.substring(startSearch, endSearch).trim();
-      
-      // Clean up
-      legalDesc = legalDesc.replace(/^[^A-Z]*/, ''); // Remove leading junk
-      legalDesc = legalDesc.replace(/hereby\s+GRANT\(S\)[^:]*:\s*/i, '');
-      legalDesc = legalDesc.replace(/\s+/g, ' ');
+      legalDesc = legalDesc
+        .replace(/^[^A-Z]*/, '')
+        .replace(/hereby\s+GRANT\(S\)[^:]*:\s*/i, '')
+        .replace(/\s+/g, ' ');
       
       if (legalDesc.length >= 30) {
-        console.log('Found legal description (pattern 4), length:', legalDesc.length);
-        console.log('Legal description preview:', legalDesc.substring(0, 150));
+        console.log('Found legal description (acknowledgment pattern), length:', legalDesc.length);
         return legalDesc;
       }
     }
   }
   
-  console.log('Could not find legal description with any pattern');
-  
-  // Debug: show text around where it should be
-  if (acknowledgeIndex !== -1) {
-    console.log('=== DEBUG: Text after acknowledgment (800 chars) ===');
-    console.log(text.substring(acknowledgeIndex + 200, acknowledgeIndex + 1000));
-  }
-  
-  return '';
-}
-
-function extractMailingAddress(text) {
-  // Not used - we use property address
+  console.log('Could not find legal description');
   return '';
 }
